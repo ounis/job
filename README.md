@@ -53,6 +53,10 @@ The exe is built automatically on every `vX.Y.Z` tag by a GitHub Actions
 workflow on a Windows runner (`.github/workflows/build-windows.yml`) and
 attached to the matching release.
 
+> **First-launch warning:** the exe is unsigned, so Windows SmartScreen may show
+> an "unknown publisher" prompt the first time you run it. Click **More info →
+> Run anyway**. Removing this prompt requires a code-signing certificate.
+
 ## Run from source
 
 ```bat
