@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ job.posting.title }} — Job Hunter{% endblock %}
+{% block content %}
+
+<a href="/" class="muted">&larr; back</a>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h1>{{ job.posting.title }}</h1>
+      <p class="muted">
+        {{ job.posting.company }} · {{ job.posting.location }} ·
+        <span class="badge badge-{{ job.status.value }}">{{ job.status.value }}</span>
+      </p>
+    </div>
+    <div class="score-big score-{{ (job.relevance.score // 34) }}">{{ job.relevance.score }}</div>
+  </div>
+
+  {% if job.relevance.reasons %}
+  <p><strong>Why this match:</strong> {{ job.relevance.reasons }}</p>
+  {% endif %}
+  {% if job.relevance.matched_skills %}
+  <p class="muted small">Matched: {{ job.relevance.matched_skills|join(', ') }}</p>
+  {% endif %}
+  {% if job.relevance.missing_skills %}
+  <p class="muted small">Missing: {{ job.relevance.missing_skills|join(', ') }}</p>
+  {% endif %}
+
+  <div class="actions">
+    {% if job.posting.url %}
+    <a href="{{ job.posting.url }}" target="_blank" rel="noopener" class="btn">Open posting</a>
+    {% endif %}
+    {% if job.status.value == 'new' %}
+    <form method="post" action="/apply" style="display:inline">
+      <input type="hidden" name="keys" value="{{ job.posting.key }}" />
+      <button class="btn btn-primary">Generate application &amp; apply</button>
+    </form>
+    <form method="post" action="/jobs/{{ job.posting.key }}/ignore" style="display:inline">
+      <button class="btn btn-ghost">Ignore</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+{% if application %}
+<section class="panel">
+  <h2>Generated application</h2>
+  <p>
+    <a class="btn" href="/files/{{ application.cv_pdf_path.split('/')[-1].split('\\')[-1] }}" target="_blank">Download tailored CV (PDF)</a>
+    <a class="btn" href="/files/{{ application.letter_pdf_path.split('/')[-1].split('\\')[-1] }}" target="_blank">Download motivation letter (PDF)</a>
+  </p>
+  <details>
+    <summary>Motivation letter (text)</summary>
+    <pre class="doc">{{ application.motivation_letter }}</pre>
+  </details>
+  <details>
+    <summary>Tailored CV (text)</summary>
+    <pre class="doc">{{ application.generated_cv }}</pre>
+  </details>
+  <details>
+    <summary>Stored application payload</summary>
+    <pre class="doc">{{ application.payload | tojson(indent=2) }}</pre>
+  </details>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Description</h2>
+  <div class="desc">{{ job.posting.description }}</div>
+</section>
+
+{% endblock %}

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Job Hunter{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="brand">🎯 Job Hunter</a>
+    <nav>
+      <span class="muted">Germany-wide job matching</span>
+    </nav>
+  </header>
+
+  {% if flash %}
+  <div class="flash">{{ flash }}</div>
+  {% endif %}
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer muted">
+    Applications generate a tailored CV + motivation letter and open the posting
+    for you to submit. Nothing is auto-submitted on your behalf.
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

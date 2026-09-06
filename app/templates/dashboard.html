@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h1>Scan results</h1>
+      {% if profile %}
+      <p class="muted">
+        Profile: <strong>{{ profile.full_name or "CV loaded" }}</strong> ·
+        seniority <span class="badge badge-info">{{ profile.seniority.value }}</span> ·
+        {{ profile.years_experience }} yrs ·
+        {{ profile.skills|length }} skills
+      </p>
+      {% else %}
+      <p class="muted">No CV parsed yet. Run a scan to parse your CV and fetch jobs.</p>
+      {% endif %}
+    </div>
+    <form method="post" action="/scan" class="scan-form">
+      <label class="check-inline">
+        <input type="checkbox" name="force_profile" value="true" />
+        re-parse CV
+      </label>
+      <button type="submit" class="btn btn-primary">Run scan</button>
+    </form>
+  </div>
+
+  {% if not ai_enabled %}
+  <div class="warn">
+    OPENAI_API_KEY not set — scanning/scoring use a heuristic fallback and
+    applying (tailored CV + letter) is disabled. Add the key to <code>.env</code>.
+  </div>
+  {% endif %}
+
+  <div class="stats">
+    <span>Matched: <strong>{{ matched|length }}</strong></span>
+    <span>Applied: <strong>{{ counts.get('applied', 0) }}</strong></span>
+    <span>Ignored: <strong>{{ counts.get('ignored', 0) }}</strong></span>
+    <span class="muted">min relevance {{ settings.min_relevance }}</span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Relevant jobs <span class="muted">(ordered by relevance)</span></h2>
+
+  {% if matched %}
+  <form method="post" action="/apply" id="apply-form">
+    <div class="bulk-bar">
+      <label class="check-inline">
+        <input type="checkbox" id="select-all" /> select all
+      </label>
+      <button type="submit" class="btn btn-primary" {{ '' if ai_enabled else 'disabled' }}>
+        Apply to selected
+      </button>
+    </div>
+
+    <table class="jobs">
+      <thead>
+        <tr>
+          <th></th><th>Score</th><th>Title</th><th>Company</th>
+          <th>Location</th><th>Match</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in matched %}
+        <tr>
+          <td><input type="checkbox" name="keys" value="{{ job.posting.key }}" class="row-check" /></td>
+          <td><span class="score score-{{ (job.relevance.score // 34) }}">{{ job.relevance.score }}</span></td>
+          <td>
+            <a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a>
+          </td>
+          <td>{{ job.posting.company }}</td>
+          <td>{{ job.posting.location }}</td>
+          <td class="muted small">
+            {% if job.relevance.matched_skills %}
+              ✓ {{ job.relevance.matched_skills[:4]|join(', ') }}
+            {% endif %}
+          </td>
+          <td>
+            <button type="submit" form="ignore-{{ loop.index }}" class="btn btn-ghost small">ignore</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </form>
+
+  {# Ignore forms kept outside the apply form to avoid nesting #}
+  {% for job in matched %}
+  <form method="post" action="/jobs/{{ job.posting.key }}/ignore" id="ignore-{{ loop.index }}"></form>
+  {% endfor %}
+
+  {% else %}
+  <p class="muted">No matches yet. Run a scan.</p>
+  {% endif %}
+</section>
+
+{% if applied %}
+<section class="panel">
+  <h2>Applied <span class="muted">({{ applied|length }})</span></h2>
+  <table class="jobs">
+    <tbody>
+      {% for job in applied %}
+      <tr class="row-applied">
+        <td><span class="badge badge-applied">applied</span></td>
+        <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
+        <td>{{ job.posting.company }}</td>
+        <td>{{ job.posting.location }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if ignored %}
+<section class="panel">
+  <h2>Ignored <span class="muted">({{ ignored|length }})</span></h2>
+  <table class="jobs">
+    <tbody>
+      {% for job in ignored %}
+      <tr class="row-ignored">
+        <td><span class="badge badge-ignored">ignored</span></td>
+        <td>{{ job.posting.title }}</td>
+        <td>{{ job.posting.company }}</td>
+        <td>
+          <form method="post" action="/jobs/{{ job.posting.key }}/unignore">
+            <button class="btn btn-ghost small">restore</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% endblock %}
