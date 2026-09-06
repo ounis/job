@@ -74,6 +74,9 @@ async def scan(force_profile: bool = Form(False)):
         summary = await services.run_scan(force_profile=force_profile)
     except services.ProfileError as e:
         return _redirect_with_msg(str(e))
+    except Exception as e:
+        log.exception("Scan failed unexpectedly")
+        return _redirect_with_msg(f"Scan failed: {type(e).__name__}: {str(e)[:200]}")
     msg = (
         f"Scan done. Fetched {summary['fetched']}, "
         f"scored {summary['new_scored']} new, "

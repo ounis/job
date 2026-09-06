@@ -15,8 +15,15 @@ from __future__ import annotations
 import re
 
 from ..config import get_settings
+from ..logging_setup import get_logger
 from ..models import CVProfile, JobPosting, RelevanceResult, Seniority
 from .client import get_ai_client
+
+log = get_logger("app.ai")
+
+
+class AIUnavailable(RuntimeError):
+    """Raised when an AI call fails and there is no usable fallback."""
 
 # ----------------------------------------------------------------------------
 # CV parsing
@@ -40,11 +47,15 @@ def parse_cv(raw_text: str) -> CVProfile:
     if not settings.ai_enabled:
         return _parse_cv_fallback(raw_text)
 
-    client = get_ai_client()
-    data = client.complete_json(
-        _PARSE_SYSTEM,
-        f"CV TEXT:\n\n{raw_text[:12000]}",
-    )
+    try:
+        client = get_ai_client()
+        data = client.complete_json(
+            _PARSE_SYSTEM,
+            f"CV TEXT:\n\n{raw_text[:12000]}",
+        )
+    except Exception as e:
+        log.warning("AI CV parse failed (%s); using heuristic fallback", _brief(e))
+        return _parse_cv_fallback(raw_text)
     seniority = _coerce_seniority(data.get("seniority"))
     return CVProfile(
         full_name=data.get("full_name", ""),
@@ -123,7 +134,6 @@ def score_relevance(profile: CVProfile, job: JobPosting) -> RelevanceResult:
     if not settings.ai_enabled:
         return _score_fallback(profile, job)
 
-    client = get_ai_client()
     user = (
         f"CANDIDATE:\n"
         f"Seniority: {profile.seniority.value}\n"
@@ -136,7 +146,12 @@ def score_relevance(profile: CVProfile, job: JobPosting) -> RelevanceResult:
         f"Location: {job.location}\n"
         f"Description: {job.description[:4000]}"
     )
-    data = client.complete_json(_SCORE_SYSTEM, user)
+    try:
+        client = get_ai_client()
+        data = client.complete_json(_SCORE_SYSTEM, user)
+    except Exception as e:
+        log.warning("AI scoring failed (%s); using heuristic fallback", _brief(e))
+        return _score_fallback(profile, job)
     return RelevanceResult(
         score=_clamp_score(data.get("score")),
         reasons=data.get("reasons", ""),
@@ -179,13 +194,15 @@ Education, Languages). No markdown fences."""
 
 
 def generate_cv(profile: CVProfile, job: JobPosting) -> str:
-    client = get_ai_client()
     user = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
         f"Description: {job.description[:4000]}\n\n"
         f"CANDIDATE CV (source of truth):\n{profile.raw_text[:12000]}"
     )
-    return client.complete_text(_CV_SYSTEM, user)
+    try:
+        return get_ai_client().complete_text(_CV_SYSTEM, user)
+    except Exception as e:
+        raise AIUnavailable(_ai_error_message(e)) from e
 
 
 _LETTER_SYSTEM = """You are an expert career coach writing a concise, sincere
@@ -197,7 +214,6 @@ Stay truthful — do not invent facts. Output only the letter body text."""
 
 
 def generate_letter(profile: CVProfile, job: JobPosting) -> str:
-    client = get_ai_client()
     user = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
         f"Location: {job.location}\n"
@@ -207,7 +223,10 @@ def generate_letter(profile: CVProfile, job: JobPosting) -> str:
         f"Skills: {', '.join(profile.skills)}\n"
         f"Experience highlights:\n{profile.raw_text[:6000]}"
     )
-    return client.complete_text(_LETTER_SYSTEM, user)
+    try:
+        return get_ai_client().complete_text(_LETTER_SYSTEM, user)
+    except Exception as e:
+        raise AIUnavailable(_ai_error_message(e)) from e
 
 
 # ----------------------------------------------------------------------------
@@ -221,6 +240,27 @@ _COMMON_SKILLS = {
     "graphql", "rest", "git", "linux", "html", "css", "vue", "angular",
     "pandas", "numpy", "pytorch", "tensorflow", "ml", "nlp", "spark",
 }
+
+
+def _brief(e: Exception) -> str:
+    """Short one-line description of an exception for logs."""
+    return f"{type(e).__name__}: {str(e)[:200]}"
+
+
+def _ai_error_message(e: Exception) -> str:
+    """User-facing message for AI failures during document generation."""
+    text = str(e).lower()
+    if "insufficient_quota" in text or "credit" in text or "quota" in text:
+        return (
+            "OpenAI request failed: your API key has no remaining credits/quota. "
+            "Add credits at https://platform.openai.com/settings/organization/billing/ "
+            "or use a key with available quota."
+        )
+    if "invalid_api_key" in text or "incorrect api key" in text or "401" in text:
+        return "OpenAI request failed: the API key appears invalid. Check OPENAI_API_KEY in .env."
+    if "rate limit" in text or "429" in text:
+        return "OpenAI request failed: rate limited. Wait a moment and try again."
+    return f"OpenAI request failed: {str(e)[:200]}"
 
 
 def _coerce_seniority(value) -> Seniority:

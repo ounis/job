@@ -153,12 +153,16 @@ def apply_to_job(key: str) -> dict:
 
     profile = ensure_profile()
     posting = job.posting
-    log.info("Generating tailored CV for %r @ %r", posting.title, posting.company)
-    cv_text = ai_ops.generate_cv(profile, posting)
-    log.debug("Generated CV (%d chars)", len(cv_text))
-    log.info("Generating motivation letter")
-    letter_text = ai_ops.generate_letter(profile, posting)
-    log.debug("Generated letter (%d chars)", len(letter_text))
+    try:
+        log.info("Generating tailored CV for %r @ %r", posting.title, posting.company)
+        cv_text = ai_ops.generate_cv(profile, posting)
+        log.debug("Generated CV (%d chars)", len(cv_text))
+        log.info("Generating motivation letter")
+        letter_text = ai_ops.generate_letter(profile, posting)
+        log.debug("Generated letter (%d chars)", len(letter_text))
+    except ai_ops.AIUnavailable as e:
+        log.error("Apply failed for %s: %s", key, e)
+        raise ProfileError(str(e)) from e
 
     cv_pdf = render_cv_pdf(cv_text, posting)
     letter_pdf = render_letter_pdf(letter_text, posting, profile)
