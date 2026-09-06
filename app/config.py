@@ -47,7 +47,9 @@ class Settings(BaseSettings):
     # Adzuna
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
-    active_providers: str = "adzuna"
+    # JSearch (RapidAPI) — broad aggregator (Google for Jobs)
+    rapidapi_key: str = ""
+    active_providers: str = "jsearch"
 
     # Search
     search_location: str = "Germany"

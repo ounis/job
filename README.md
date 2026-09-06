@@ -30,8 +30,10 @@ scans, and stores the exact payload used for each application.
 - **SQLite** for tracking (single file at `data/jobs.db`).
 - **OpenAI** for CV parsing, seniority inference, relevance scoring, and
   document generation (behind a swappable `AIClient`).
-- **Adzuna API** for job data (Germany), with a `bundesagentur` provider stub
-  ready to enable. Providers are pluggable.
+- **JSearch (RapidAPI)** as the default job source — a broad aggregator that
+  pulls from Google for Jobs (LinkedIn, Indeed, Glassdoor, company pages, ...).
+  **Adzuna** (also an aggregator) and a `bundesagentur` stub are included too.
+  Providers are pluggable and results from multiple are merged + de-duplicated.
 - **ReportLab** for PDF generation (pure Python — no system deps on Windows).
 
 ## Download the Windows build (no Python needed)
@@ -103,8 +105,9 @@ python run.py
 | --- | --- |
 | `OPENAI_API_KEY` | Enables AI parsing/scoring and CV+letter generation. Without it, scanning still works with a cruder keyword-based score, but applying is disabled. |
 | `OPENAI_MODEL` | Default `gpt-4o-mini`. |
-| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Free credentials from https://developer.adzuna.com/. Required to fetch jobs. |
-| `ACTIVE_PROVIDERS` | Comma list: `adzuna`, `bundesagentur`. |
+| `RAPIDAPI_KEY` | Key for JSearch (RapidAPI) — the default, broadest source. Subscribe (free tier) at https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch. |
+| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Free credentials from https://developer.adzuna.com/ (alternative/additional source). |
+| `ACTIVE_PROVIDERS` | Comma list: `jsearch`, `adzuna`, `bundesagentur`. Run several — results merge + de-dupe. |
 | `SEARCH_LOCATION` | `Germany` = country-wide, or a city like `Berlin`. |
 | `SEARCH_DISTANCE_KM` | Radius around the location. |
 | `SEARCH_KEYWORDS` | Comma list. Leave empty to auto-derive from your CV. |
@@ -114,8 +117,10 @@ python run.py
 
 ### Getting API keys
 
-- **Adzuna** (job data): register at https://developer.adzuna.com/ → free
-  `app_id` + `app_key`.
+- **JSearch** (broad aggregator, default): subscribe at
+  https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch → copy your RapidAPI key.
+- **Adzuna** (optional additional source): register at
+  https://developer.adzuna.com/ → free `app_id` + `app_key`.
 - **OpenAI** (AI): https://platform.openai.com/ → API key.
 
 ## Project layout

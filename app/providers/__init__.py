@@ -10,8 +10,10 @@ from ..config import get_settings
 from .adzuna import AdzunaProvider
 from .base import JobProvider
 from .bundesagentur import BundesagenturProvider
+from .jsearch import JSearchProvider
 
 _REGISTRY = {
+    "jsearch": JSearchProvider,
     "adzuna": AdzunaProvider,
     "bundesagentur": BundesagenturProvider,
 }
