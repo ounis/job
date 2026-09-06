@@ -126,6 +126,14 @@ def job_detail(request: Request, key: str):
     )
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    path = STATIC_DIR / "favicon.ico"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="favicon not found")
+    return FileResponse(path, media_type="image/x-icon")
+
+
 @app.get("/files/{name}")
 def download(name: str):
     # Only serve files from the generated dir.
