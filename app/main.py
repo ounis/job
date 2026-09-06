@@ -22,7 +22,11 @@ from fastapi.templating import Jinja2Templates
 
 from . import db, services
 from .config import GENERATED_DIR, STATIC_DIR, TEMPLATES_DIR, get_settings
+from .logging_setup import configure_logging, get_logger
 from .models import JobStatus
+
+configure_logging()
+log = get_logger("app.main")
 
 app = FastAPI(title="Job Hunter")
 
@@ -33,6 +37,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
+    s = get_settings()
+    log.info("Job Hunter starting up")
+    log.info("Providers=%s location=%r ai_enabled=%s log_level=%s",
+             s.provider_list, s.search_location, s.ai_enabled, s.log_level)
 
 
 @app.get("/", response_class=HTMLResponse)

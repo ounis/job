@@ -14,8 +14,11 @@ from __future__ import annotations
 import httpx
 
 from ..config import get_settings
+from ..logging_setup import get_logger
 from ..models import CVProfile, JobPosting
 from .base import JobProvider
+
+log = get_logger("app.providers.adzuna")
 
 API_BASE = "https://api.adzuna.com/v1/api/jobs/de/search"
 
@@ -65,17 +68,23 @@ class AdzunaProvider(JobProvider):
                     params["where"] = where
                     params["distance"] = distance_km
 
+                log.info("GET %s/%d what=%r where=%r", API_BASE, page, what, where)
                 resp = await client.get(f"{API_BASE}/{page}", params=params)
+                log.info("Adzuna HTTP %s (page %d)", resp.status_code, page)
                 resp.raise_for_status()
                 data = resp.json()
 
-                for item in data.get("results", []):
+                results = data.get("results", [])
+                log.debug("Adzuna page %d returned %d items", page, len(results))
+                for item in results:
                     postings.append(self._normalize(item))
                     if len(postings) >= limit:
+                        log.info("Adzuna normalized %d postings (limit reached)", len(postings))
                         return postings
 
-                if not data.get("results"):
+                if not results:
                     break
+        log.info("Adzuna normalized %d postings", len(postings))
         return postings
 
     def _normalize(self, item: dict) -> JobPosting:

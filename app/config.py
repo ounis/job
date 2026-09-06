@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     # App
     cv_path: str = "data/cv.pdf"
     min_relevance: int = 40
+    log_level: str = "INFO"
 
     @property
     def provider_list(self) -> list[str]:

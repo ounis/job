@@ -17,8 +17,11 @@ from __future__ import annotations
 import httpx
 
 from ..config import get_settings
+from ..logging_setup import get_logger
 from ..models import CVProfile, JobPosting
 from .base import JobProvider
+
+log = get_logger("app.providers.jsearch")
 
 API_URL = "https://jsearch.p.rapidapi.com/search"
 API_HOST = "jsearch.p.rapidapi.com"
@@ -68,16 +71,21 @@ class JSearchProvider(JobProvider):
             "date_posted": "month",
         }
 
+        log.info("GET %s query=%r country=de num_pages=%d", API_URL, query, num_pages)
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(API_URL, headers=headers, params=params)
+            log.info("JSearch HTTP %s", resp.status_code)
             resp.raise_for_status()
             data = resp.json()
 
+        raw = data.get("data", []) or []
+        log.debug("JSearch returned %d raw items", len(raw))
         postings: list[JobPosting] = []
-        for item in data.get("data", []) or []:
+        for item in raw:
             postings.append(self._normalize(item))
             if len(postings) >= limit:
                 break
+        log.info("JSearch normalized %d postings (limit %d)", len(postings), limit)
         return postings
 
     def _normalize(self, item: dict) -> JobPosting:
