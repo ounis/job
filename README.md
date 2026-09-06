@@ -34,7 +34,26 @@ scans, and stores the exact payload used for each application.
   ready to enable. Providers are pluggable.
 - **ReportLab** for PDF generation (pure Python — no system deps on Windows).
 
-## Setup (Windows)
+## Download the Windows build (no Python needed)
+
+Grab `job.exe` from the [Releases page](https://github.com/ounis/job/releases).
+Put it in a folder, drop your `.env` and CV next to it, then double-click it —
+it starts the app and opens your browser at http://127.0.0.1:8000. Close the
+console window to stop it.
+
+```
+some-folder\
+  job.exe
+  .env            <- your config (copy from .env.example)
+  data\
+    cv.pdf        <- your CV
+```
+
+The exe is built automatically on every `vX.Y.Z` tag by a GitHub Actions
+workflow on a Windows runner (`.github/workflows/build-windows.yml`) and
+attached to the matching release.
+
+## Run from source
 
 ```bat
 :: 1. Create and activate a virtual environment
@@ -56,7 +75,15 @@ python run.py
 
 Open http://127.0.0.1:8000 and click **Run scan**.
 
-### Setup (macOS / Linux)
+### Build the exe yourself
+
+```bat
+pip install pyinstaller
+pyinstaller job.spec
+:: -> dist\job.exe
+```
+
+### macOS / Linux
 
 ```bash
 python3 -m venv .venv

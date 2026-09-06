@@ -14,7 +14,6 @@ Routes:
 from __future__ import annotations
 
 import urllib.parse
-from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -22,13 +21,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import db, services
-from .config import GENERATED_DIR, ROOT_DIR, get_settings
+from .config import GENERATED_DIR, STATIC_DIR, TEMPLATES_DIR, get_settings
 from .models import JobStatus
 
 app = FastAPI(title="Job Hunter")
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

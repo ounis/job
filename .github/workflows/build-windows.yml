@@ -1,0 +1,58 @@
+name: Build Windows exe
+
+# Build on every tag push (attaches the exe to the matching Release) and allow
+# manual runs from the Actions tab for testing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to upload assets to the Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build exe
+        run: pyinstaller job.spec
+
+      - name: Smoke test (exe boots and serves)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath ".\dist\job.exe" -PassThru
+          Start-Sleep -Seconds 12
+          try {
+            $r = Invoke-WebRequest -Uri "http://127.0.0.1:8000/" -UseBasicParsing -TimeoutSec 10
+            if ($r.StatusCode -ne 200) { throw "Unexpected status $($r.StatusCode)" }
+            Write-Host "Smoke test OK: HTTP 200"
+          } finally {
+            Stop-Process -Id $p.Id -Force
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-windows
+          path: dist/job.exe
+
+      - name: Attach exe to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/job.exe
