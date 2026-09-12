@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     application_payload TEXT,
     cv_pdf_path        TEXT,
     letter_pdf_path    TEXT,
+    applied_at         TEXT,
     first_seen_at  TEXT NOT NULL,
     updated_at     TEXT NOT NULL
 );
@@ -81,6 +82,10 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Migrate existing DBs that predate the applied_at column.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "applied_at" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN applied_at TEXT")
 
 
 # ----------------------------------------------------------------------------
@@ -121,8 +126,8 @@ def load_profile_hash() -> Optional[str]:
 def upsert_job(job: ScoredJob) -> None:
     """Insert a newly scanned job, or refresh its fields/relevance.
 
-    A job that is already applied/ignored keeps its status; we never demote it
-    back to 'new'. This is what makes applied/ignored jobs stick across scans.
+    A job that is already prepared/applied/ignored keeps its status; we never
+    demote it back to 'new'. This is what makes those jobs stick across scans.
     """
     p = job.posting
     with connect() as conn:
@@ -195,10 +200,28 @@ def _row_to_scored(row: sqlite3.Row) -> ScoredJob:
             relevance = RelevanceResult.model_validate_json(row["relevance_data"])
         except Exception:
             relevance = RelevanceResult(score=row["relevance"])
+    # applied_at may be absent on very old rows read before migration.
+    try:
+        applied_at = row["applied_at"]
+    except (IndexError, KeyError):
+        applied_at = None
+    # Whether the prepared documents were AI-tailored (from the stored payload).
+    ai_generated = None
+    try:
+        payload_json = row["application_payload"]
+    except (IndexError, KeyError):
+        payload_json = None
+    if payload_json:
+        try:
+            ai_generated = json.loads(payload_json).get("ai_generated")
+        except (ValueError, TypeError):
+            ai_generated = None
     return ScoredJob(
         posting=posting,
         status=JobStatus(row["status"]),
         relevance=relevance,
+        applied_at=applied_at,
+        ai_generated=ai_generated,
     )
 
 
@@ -240,12 +263,17 @@ def save_application(
     cv_pdf_path: str,
     letter_pdf_path: str,
 ) -> None:
-    """Persist everything used for an application and mark the job applied."""
+    """Persist prepared documents and set the job status to 'prepared'.
+
+    Preparing does NOT submit the application — it generates and stores the
+    tailored CV + letter for review. The user confirms submission separately
+    via mark_applied(), which sets status='applied' and records applied_at.
+    """
     with connect() as conn:
         conn.execute(
             """
             UPDATE jobs SET
-                status = 'applied',
+                status = 'prepared',
                 generated_cv = ?,
                 motivation_letter = ?,
                 application_payload = ?,
@@ -259,6 +287,37 @@ def save_application(
                 cv_pdf_path, letter_pdf_path, _now(), key,
             ),
         )
+
+
+def unmark_applied(key: str) -> None:
+    """Revert an applied job back to 'prepared' and clear the application date.
+
+    The prepared documents are kept, so the user can review/resubmit or mark it
+    applied again.
+    """
+    with connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET status = 'prepared', applied_at = NULL, updated_at = ? "
+            "WHERE key = ?",
+            (_now(), key),
+        )
+
+
+def mark_applied(key: str) -> Optional[str]:
+    """Mark a prepared job as applied and stamp the application date.
+
+    Returns the applied_at ISO timestamp, or None if the job doesn't exist.
+    """
+    ts = _now()
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'applied', applied_at = ?, updated_at = ? "
+            "WHERE key = ?",
+            (ts, ts, key),
+        )
+        if cur.rowcount == 0:
+            return None
+    return ts
 
 
 def get_application(key: str) -> Optional[dict]:
@@ -281,6 +340,15 @@ def get_application(key: str) -> Optional[dict]:
         "cv_pdf_path": row["cv_pdf_path"],
         "letter_pdf_path": row["letter_pdf_path"],
     }
+
+
+def clear_new_jobs() -> int:
+    """Delete all jobs in status 'new'. Applied/ignored jobs are kept so they
+    stay sticky. Returns the number of rows removed. Used to reset matches
+    before re-scanning (e.g. after switching CVs)."""
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM jobs WHERE status = 'new'")
+        return cur.rowcount
 
 
 def counts_by_status() -> dict[str, int]:

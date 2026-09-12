@@ -8,21 +8,44 @@ scans, and stores the exact payload used for each application.
 
 ## How it works
 
-1. You drop your CV into `data/` and point `.env` at it.
-2. **Scan** parses your CV once (AI), infers seniority + skills, derives search
-   keywords, queries the job provider(s), and scores every new job 0–100.
+1. You drop one or more CVs into `data/`. The app auto-detects them and lets you
+   pick the active CV from a dropdown on the dashboard.
+2. **Scan** parses your CV once (AI when a key is set, otherwise a keyword
+   heuristic), infers seniority + skills, derives search keywords, queries the
+   job provider(s), and scores every new job 0–100.
 3. The dashboard lists matches ordered by relevance, with status badges.
-4. Tick the jobs you want and hit **Apply to selected**. For each one the app
-   generates a tailored CV + motivation letter (PDF), stores the payload, marks
-   it `applied`, and gives you the posting link to submit.
-5. Applied/ignored jobs are kept out of fresh matching but stay visible with an
-   obvious status badge.
+4. Tick the jobs you want and hit **Prepare selected**. For each one the app
+   generates a tailored CV + motivation letter (PDF), stores the payload, and
+   marks it `prepared` — it does **not** submit anything.
+5. Review the prepared documents, open the posting to submit, then click
+   **Mark as applied** to record the application (with a date). You can also
+   **Regenerate** documents (e.g. after adding an AI key) or move a job back
+   from applied/ignored.
+6. Prepared/applied/ignored jobs are kept out of fresh matching but stay visible
+   with an obvious status badge.
 
 > **On "applying":** No individual job platform offers a legitimate one-click
-> auto-submit API. So the Apply action prepares your tailored documents and
-> records everything, then you submit on the posting page. Honest and
+> auto-submit API. So the app prepares your tailored documents and records
+> everything; you submit on the posting page and mark it applied. Honest and
 > ToS-safe. The provider layer is pluggable, so if you later get access to an
 > API that *does* submit, it drops into `app/providers/`.
+
+### Status lifecycle
+
+`new` → `prepared` → `applied`, plus `ignored`. Preparing generates documents;
+marking applied stamps the application date; you can unmark applied (back to
+`prepared`) or regenerate at any point. Each prepared/applied job is tagged
+**AI** or **non-AI** depending on whether OpenAI was available when its
+documents were generated.
+
+### Working without an OpenAI key
+
+Everything works without AI, just with cruder results:
+- **Scanning/scoring** falls back to a keyword heuristic (derives keywords and
+  skills from your CV text — works for any field, not just tech).
+- **Preparing** still produces a plain, non-tailored CV + letter from your
+  profile, clearly tagged **non-AI** in the UI. Add a key and **Regenerate** to
+  upgrade them to AI-tailored versions.
 
 ## Stack
 
@@ -73,7 +96,8 @@ pip install -r requirements.txt
 copy .env.example .env
 :: then edit .env (see below)
 
-:: 4. Put your CV in data\ (pdf, docx, txt or md) and set CV_PATH in .env
+:: 4. Put your CV(s) in data\ (pdf, docx, txt or md) — auto-detected; pick the
+::    active one from the dashboard. CV_PATH defaults to the data\ folder.
 
 :: 5. Run
 python run.py
@@ -99,21 +123,40 @@ cp .env.example .env      # edit it
 python run.py
 ```
 
-## Configuration (`.env`)
+## Configuration
+
+You can edit all of these from the **Settings** page in the web UI (changes save
+to `.env` and take effect immediately, no restart), or edit `.env` directly.
 
 | Key | What it does |
 | --- | --- |
-| `OPENAI_API_KEY` | Enables AI parsing/scoring and CV+letter generation. Without it, scanning still works with a cruder keyword-based score, but applying is disabled. |
-| `OPENAI_MODEL` | Default `gpt-4o-mini`. |
+| `OPENAI_API_KEY` | Enables AI parsing/scoring and AI-tailored CV+letter generation. Without it, scanning uses a keyword heuristic and preparing produces plain non-AI drafts. |
+| `OPENAI_MODEL` | Default `gpt-4o-mini` (cheapest). |
 | `RAPIDAPI_KEY` | Key for JSearch (RapidAPI) — the default, broadest source. Subscribe (free tier) at https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch. |
+| `JSEARCH_MAX_PAGES` | Pages fetched per JSearch query (~10 results/page). Free tier = `1`. Raise only if your plan allows more. |
 | `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Free credentials from https://developer.adzuna.com/ (alternative/additional source). |
 | `ACTIVE_PROVIDERS` | Comma list: `jsearch`, `adzuna`, `bundesagentur`. Run several — results merge + de-dupe. |
 | `SEARCH_LOCATION` | `Germany` = country-wide, or a city like `Berlin`. |
 | `SEARCH_DISTANCE_KM` | Radius around the location. |
 | `SEARCH_KEYWORDS` | Comma list. Leave empty to auto-derive from your CV. |
 | `MAX_RESULTS` | Jobs pulled per scan. |
-| `CV_PATH` | Path to your CV file (e.g. `data/cv.pdf`). |
-| `MIN_RELEVANCE` | Minimum score (0–100) for a job to show as a match. |
+| `CV_PATH` | A **directory** (default `data`) to auto-scan for CVs, or a specific file to pin one. |
+| `MIN_RELEVANCE` | Minimum score (0–100) to show a job as a match. Use ~`20` with the no-AI heuristic; ~`40` once AI scoring is on. |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. Logs also mirror to `data/job.log` (rotating, fresh each run). |
+
+### AI usage & cost controls
+
+The heaviest OpenAI cost is scoring (one call per new job), so these let you cap
+spend. All are editable from the Settings page.
+
+| Key | What it does |
+| --- | --- |
+| `AI_SCORE` | `false` = never AI-score during scan (free heuristic only, zero tokens). Tokens are then spent only when preparing documents. |
+| `AI_PREFILTER` | Heuristic-rank all jobs first, then AI-score only the top N. |
+| `AI_SCORE_TOP_N` | How many jobs get an AI score per scan when prefiltering. |
+| `AI_MAX_TOKENS_TEXT` | Response cap for CV/letter generation. |
+| `AI_MAX_TOKENS_JSON` | Response cap for CV parsing and scoring. |
+| `AI_*_CHARS` | Truncation limits on the CV/job text sent to the model. |
 
 ### Getting API keys
 
@@ -138,22 +181,27 @@ app/
     operations.py    parse CV, score, generate CV + letter
   providers/
     base.py          JobProvider interface
+    jsearch.py       JSearch / RapidAPI (default, broad aggregator)
     adzuna.py        Adzuna (Germany)
     bundesagentur.py stub, ready to enable
   pdf/render.py      CV + letter -> PDF (ReportLab)
-  templates/         dashboard + job detail
+  logging_setup.py   console + rotating file logging (data/job.log)
+  templates/         dashboard, job detail, settings, ignored
   static/            css + js
-data/                sqlite db, your CV, generated/ PDFs
+data/                sqlite db, your CV(s), generated/ PDFs, job.log
 run.py               entry point
 ```
 
 ## Tracking model
 
-Every job seen is stored with a status: `new`, `applied`, or `ignored`. A
-re-scan never demotes an `applied`/`ignored` job back to `new`, so your
-decisions stick. Applied jobs also store the generated CV text, the motivation
-letter text, the PDF paths, and the full application payload — viewable on the
-job detail page.
+Every job seen is stored with a status: `new`, `prepared`, `applied`, or
+`ignored`. A re-scan never demotes a `prepared`/`applied`/`ignored` job back to
+`new`, so your decisions stick. Prepared/applied jobs also store the generated
+CV text, the motivation letter text, the PDF paths, the full application
+payload, and (once applied) the application date — all viewable on the job
+detail page. Ignored jobs get their own page where you can restore them, and the
+dashboard has a **Clear results** action to drop current matches before a fresh
+scan (kept-status jobs are preserved).
 
 ## Notes
 

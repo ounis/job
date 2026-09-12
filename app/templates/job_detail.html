@@ -31,25 +31,65 @@
     <a href="{{ job.posting.url }}" target="_blank" rel="noopener" class="btn">Open posting</a>
     {% endif %}
     {% if job.status.value == 'new' %}
-    <form method="post" action="/apply" style="display:inline">
+    <form method="post" action="/prepare" style="display:inline">
       <input type="hidden" name="keys" value="{{ job.posting.key }}" />
-      <button class="btn btn-primary">Generate application &amp; apply</button>
+      <select name="language" class="lang-select">
+        <option value="de" selected>German</option>
+        <option value="en">English</option>
+      </select>
+      <button class="btn btn-primary">Prepare application</button>
+    </form>
+    <form method="post" action="/jobs/{{ job.posting.key }}/mark-applied" style="display:inline">
+      <button class="btn btn-outline">Mark as applied</button>
     </form>
     <form method="post" action="/jobs/{{ job.posting.key }}/ignore" style="display:inline">
       <button class="btn btn-ghost">Ignore</button>
     </form>
+    {% elif job.status.value == 'prepared' %}
+    <form method="post" action="/jobs/{{ job.posting.key }}/mark-applied" style="display:inline">
+      <button class="btn btn-primary">Mark as applied</button>
+    </form>
+    <form method="post" action="/jobs/{{ job.posting.key }}/regenerate" style="display:inline">
+      <select name="language" class="lang-select">
+        <option value="de" selected>German</option>
+        <option value="en">English</option>
+      </select>
+      <button class="btn btn-ghost">Regenerate documents</button>
+    </form>
+    <form method="post" action="/jobs/{{ job.posting.key }}/ignore" style="display:inline">
+      <button class="btn btn-outline">Ignore</button>
+    </form>
+    {% elif job.status.value == 'applied' %}
+    <form method="post" action="/jobs/{{ job.posting.key }}/unmark-applied" style="display:inline">
+      <button class="btn btn-ghost">Unmark applied</button>
+    </form>
+    <form method="post" action="/jobs/{{ job.posting.key }}/regenerate" style="display:inline">
+      <select name="language" class="lang-select">
+        <option value="de" selected>German</option>
+        <option value="en">English</option>
+      </select>
+      <button class="btn btn-ghost">Regenerate documents</button>
+    </form>
+    {% endif %}
+    {% if job.status.value == 'applied' and job.applied_at %}
+    <span class="muted">Applied on {{ job.applied_at[:10] }}</span>
     {% endif %}
   </div>
 </section>
 
 {% if application %}
 <section class="panel">
-  <h2>Generated application</h2>
+  <h2>Prepared documents <span class="muted">(review before submitting)</span></h2>
+  <div class="warn">
+    This app does <strong>not</strong> submit applications. Review the CV and
+    letter below, open the posting to apply, then click
+    <strong>Mark as applied</strong> to record the date.
+  </div>
   {% if application.payload.ai_generated == false %}
   <div class="warn">
     These documents were generated <strong>without AI</strong> (OpenAI was
     unavailable). They are plain, non-tailored drafts — review and edit before
-    sending. Add OpenAI credit and re-apply to get AI-tailored versions.
+    sending. Add OpenAI credit and re-prepare to get AI-tailored versions.
   </div>
   {% endif %}
   <p>

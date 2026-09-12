@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     rapidapi_key: str = ""
     # Free tier caps num_pages at 1; raise only if your plan allows more.
     jsearch_max_pages: int = 1
+    # Bundesagentur (German Federal Employment Agency) — public client id by
+    # default; the API is geo-restricted to Germany/EU.
+    bundesagentur_api_key: str = ""
     active_providers: str = "jsearch"
 
     # Search
@@ -81,7 +84,9 @@ class Settings(BaseSettings):
     max_results: int = 50
 
     # App
-    cv_path: str = "data/cv.pdf"
+    # CV_PATH may be a directory (scan it for CVs and auto-pick / let the UI
+    # choose) or a specific file (explicit override). Default: the data/ dir.
+    cv_path: str = "data"
     min_relevance: int = 40
     log_level: str = "INFO"
 
@@ -110,23 +115,26 @@ class Settings(BaseSettings):
 
     @property
     def cv_full_path(self) -> Path:
-        """Resolve the configured CV path; fall back to a detected CV.
+        """Resolve the active CV.
 
-        If CV_PATH points at a missing file (or is blank), auto-pick the newest
-        supported CV found in data/ so the app works without manual config.
+        CV_PATH can be:
+          - a directory (default: "data") -> auto-pick the newest CV found in
+            data/ (the UI can override the choice by writing a specific file);
+          - a specific file -> use it if it exists, else fall back to discovery.
+        If nothing is found, return the default file path so callers can surface
+        a clear "not found" error pointing at the expected location.
         """
         configured = Path(self.cv_path) if self.cv_path else None
         if configured is not None:
             resolved = configured if configured.is_absolute() else ROOT_DIR / configured
-            if resolved.exists():
+            # A concrete, existing file wins (explicit selection/override).
+            if resolved.is_file():
                 return resolved
+            # A directory (or missing path) means "discover a CV".
         detected = discover_cv_files()
         if detected:
             return detected[0]
-        # Nothing found: return the configured path (or default) so callers can
-        # surface a clear "not found" error pointing at the expected location.
-        fallback = configured or Path(self.cv_path or "data/cv.pdf")
-        return fallback if fallback.is_absolute() else ROOT_DIR / fallback
+        return DATA_DIR / "cv.pdf"
 
     @property
     def detected_cvs(self) -> list[Path]:
@@ -160,26 +168,37 @@ def _relativize(path: Path) -> str:
         return str(path)
 
 
-def set_cv_path(path: Path) -> None:
-    """Persist the chosen CV path to CV_PATH in .env and refresh settings.
+def set_env_values(values: dict[str, str]) -> None:
+    """Upsert multiple KEY=value pairs in .env, then refresh cached settings.
 
-    Rewrites (or appends) the CV_PATH line and clears the cached Settings so the
-    next get_settings() picks up the change.
+    Existing lines for a key are rewritten in place (preserving surrounding
+    comments and ordering); missing keys are appended. Clears the Settings cache
+    so the next get_settings() reflects the change.
     """
-    value = _relativize(path)
-    new_line = f"CV_PATH={value}"
+    if not values:
+        return
 
     lines: list[str] = []
-    found = False
     if ENV_FILE.exists():
         lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if line.strip().startswith("CV_PATH="):
-                lines[i] = new_line
-                found = True
-                break
-    if not found:
-        lines.append(new_line)
-    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    remaining = dict(values)
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+
+    # Append any keys that weren't already present.
+    for key, val in remaining.items():
+        lines.append(f"{key}={val}")
+
+    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
     get_settings.cache_clear()
+
+
+def set_cv_path(path: Path) -> None:
+    """Persist the chosen CV path to CV_PATH in .env and refresh settings."""
+    set_env_values({"CV_PATH": _relativize(path)})

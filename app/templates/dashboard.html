@@ -23,6 +23,10 @@
       </label>
       <button type="submit" class="btn btn-primary">Run scan</button>
     </form>
+    <form method="post" action="/jobs/clear" class="scan-form"
+          onsubmit="return confirm('Delete all current matches? Applied/ignored jobs are kept.');">
+      <button type="submit" class="btn btn-ghost">Clear results</button>
+    </form>
   </div>
 
   {% if not ai_enabled %}
@@ -65,14 +69,22 @@
   <h2>Relevant jobs <span class="muted">(ordered by relevance)</span></h2>
 
   {% if matched %}
-  <form method="post" action="/apply" id="apply-form">
+  <form method="post" action="/prepare" id="apply-form">
     <div class="bulk-bar">
       <label class="check-inline">
         <input type="checkbox" id="select-all" /> select all
       </label>
-      <button type="submit" class="btn btn-primary" {{ '' if ai_enabled else 'disabled' }}>
-        Apply to selected
+      <button type="submit" class="btn btn-primary">
+        Prepare selected
       </button>
+      <label class="check-inline">
+        in
+        <select name="language">
+          <option value="de" selected>German</option>
+          <option value="en">English</option>
+        </select>
+      </label>
+      <span class="muted small">generates a tailored CV + letter for review — does not submit</span>
     </div>
 
     <table class="jobs">
@@ -98,7 +110,7 @@
             {% endif %}
           </td>
           <td>
-            <button type="submit" form="ignore-{{ loop.index }}" class="btn btn-ghost small">ignore</button>
+            <button type="submit" form="ignore-{{ loop.index }}" class="btn btn-outline small">Ignore</button>
           </td>
         </tr>
         {% endfor %}
@@ -116,17 +128,42 @@
   {% endif %}
 </section>
 
-{% if applied %}
+{% if prepared %}
 <section class="panel">
-  <h2>Applied <span class="muted">({{ applied|length }})</span></h2>
+  <h2>Prepared <span class="muted">({{ prepared|length }})</span></h2>
+  <p class="muted small">
+    Documents are ready to review. Open the posting to submit, then mark it
+    applied to record the date.
+  </p>
   <table class="jobs">
     <tbody>
-      {% for job in applied %}
-      <tr class="row-applied">
-        <td><span class="badge badge-applied">applied</span></td>
+      {% for job in prepared %}
+      <tr class="row-prepared">
+        <td>
+          <span class="badge badge-prepared">prepared</span>
+          {% if job.ai_generated %}
+          <span class="badge badge-ai" title="Documents were AI-tailored">AI</span>
+          {% elif job.ai_generated == false %}
+          <span class="badge badge-noai" title="Plain, non-AI drafts">non-AI</span>
+          {% endif %}
+        </td>
         <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
         <td>{{ job.posting.company }}</td>
         <td>{{ job.posting.location }}</td>
+        <td>
+          {% if job.posting.url %}
+          <a href="{{ job.posting.url }}" target="_blank" rel="noopener" class="btn btn-ghost small">Open posting</a>
+          {% endif %}
+          <form method="post" action="/jobs/{{ job.posting.key }}/mark-applied" style="display:inline">
+            <button class="btn btn-primary small">Mark as applied</button>
+          </form>
+          <form method="post" action="/jobs/{{ job.posting.key }}/regenerate" style="display:inline">
+            <button class="btn btn-ghost small">Regenerate</button>
+          </form>
+          <form method="post" action="/jobs/{{ job.posting.key }}/ignore" style="display:inline">
+            <button class="btn btn-outline small">Ignore</button>
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -134,25 +171,45 @@
 </section>
 {% endif %}
 
-{% if ignored %}
+{% if applied %}
 <section class="panel">
-  <h2>Ignored <span class="muted">({{ ignored|length }})</span></h2>
+  <h2>Applied <span class="muted">({{ applied|length }})</span></h2>
   <table class="jobs">
     <tbody>
-      {% for job in ignored %}
-      <tr class="row-ignored">
-        <td><span class="badge badge-ignored">ignored</span></td>
-        <td>{{ job.posting.title }}</td>
-        <td>{{ job.posting.company }}</td>
+      {% for job in applied %}
+      <tr class="row-applied">
         <td>
-          <form method="post" action="/jobs/{{ job.posting.key }}/unignore">
-            <button class="btn btn-ghost small">restore</button>
+          <span class="badge badge-applied">applied</span>
+          {% if job.ai_generated %}
+          <span class="badge badge-ai" title="Documents were AI-tailored">AI</span>
+          {% elif job.ai_generated == false %}
+          <span class="badge badge-noai" title="Plain, non-AI drafts">non-AI</span>
+          {% endif %}
+        </td>
+        <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
+        <td>{{ job.posting.company }}</td>
+        <td>{{ job.posting.location }}</td>
+        <td class="muted small">
+          {% if job.applied_at %}applied {{ job.applied_at[:10] }}{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/jobs/{{ job.posting.key }}/unmark-applied" style="display:inline">
+            <button class="btn btn-ghost small">Unmark</button>
           </form>
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+</section>
+{% endif %}
+
+{% if counts.get('ignored', 0) %}
+<section class="panel">
+  <p class="muted">
+    You have <strong>{{ counts.get('ignored', 0) }}</strong> ignored job(s).
+    <a href="/ignored">View and restore them &rarr;</a>
+  </p>
 </section>
 {% endif %}
 

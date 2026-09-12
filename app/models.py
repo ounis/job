@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class JobStatus(str, Enum):
     NEW = "new"
+    PREPARED = "prepared"
     APPLIED = "applied"
     IGNORED = "ignored"
 
@@ -72,3 +73,5 @@ class ScoredJob(BaseModel):
     posting: JobPosting
     status: JobStatus = JobStatus.NEW
     relevance: RelevanceResult = Field(default_factory=RelevanceResult)
+    applied_at: Optional[str] = None  # ISO timestamp set when marked applied
+    ai_generated: Optional[bool] = None  # whether prepared docs were AI-tailored

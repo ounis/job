@@ -76,26 +76,114 @@ def parse_cv(raw_text: str) -> CVProfile:
 
 
 def _parse_cv_fallback(raw_text: str) -> CVProfile:
+    """Heuristic CV parse for when AI is unavailable.
+
+    Works for ANY role (not just tech): it derives titles/skills/headline from
+    the CV's own text — the headline line, an explicit "Skills" section, and
+    detected role titles — instead of relying on a fixed tech-skills list.
+    """
     email = ""
     m = re.search(r"[\w.\-+]+@[\w.\-]+\.\w+", raw_text)
     if m:
         email = m.group(0)
-    # crude skill guess: capitalized tech-ish tokens
-    tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9+.#]{1,20}\b", raw_text)
-    common = [t for t in tokens if t.lower() in _COMMON_SKILLS]
-    skills = sorted(set(common), key=str.lower)
+
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+
     years = 0.0
     ym = re.search(r"(\d+)\+?\s*(?:years|jahre)", raw_text, re.IGNORECASE)
     if ym:
         years = float(ym.group(1))
+
+    headline = _guess_headline(lines)
+    titles = _guess_titles(raw_text)
+    skills = _guess_skills(raw_text)
+
     return CVProfile(
+        headline=headline,
         email=email,
         summary=raw_text[:400],
         seniority=_seniority_from_years(years),
         years_experience=years,
         skills=skills,
+        titles=titles,
         raw_text=raw_text,
     )
+
+
+# Role words seen across many fields — used to detect job titles in any CV.
+_TITLE_WORDS = (
+    "engineer", "developer", "manager", "analyst", "consultant", "designer",
+    "architect", "administrator", "specialist", "coordinator", "executive",
+    "representative", "lead", "director", "officer", "accountant", "nurse",
+    "teacher", "recruiter", "scientist", "technician", "assistant", "advisor",
+    "sales", "marketing", "account", "business development", "customer success",
+    "product", "project", "operations", "support", "success",
+)
+
+
+def _guess_headline(lines: list[str]) -> str:
+    """The headline is usually one of the first non-name lines (a role phrase)."""
+    for ln in lines[:6]:
+        low = ln.lower()
+        if "@" in ln or re.search(r"\d{3,}", ln):
+            continue  # skip contact/phone lines
+        if any(w in low for w in _TITLE_WORDS):
+            return ln[:120]
+    return ""
+
+
+def _guess_titles(raw_text: str) -> list[str]:
+    """Extract role titles by scanning lines that contain common role words."""
+    titles: list[str] = []
+    for ln in raw_text.splitlines():
+        # Strip control chars (e.g. stray bullet glyphs) and whitespace.
+        s = re.sub(r"[\x00-\x1f\x7f]", " ", ln).strip()
+        low = s.lower()
+        if not s or len(s) > 80:
+            continue
+        # Skip skill-list lines (comma-dense) and obvious bullet points.
+        if s.count(",") >= 2 or s[:1] in "•·-*":
+            continue
+        if any(w in low for w in _TITLE_WORDS):
+            # Take the part before a separator (— , | @ ( etc.) as the title.
+            title = re.split(r"[—\-|@(•·,]", s, 1)[0].strip(" ,:")
+            # A title is a short phrase, not a sentence.
+            if 3 <= len(title) <= 45 and len(title.split()) <= 6 and title not in titles:
+                titles.append(title)
+        if len(titles) >= 6:
+            break
+    return titles
+
+
+def _guess_skills(raw_text: str) -> list[str]:
+    """Prefer an explicit Skills section; fall back to known common skills."""
+    skills: list[str] = []
+    # 1) Grab the "Skills" section content if present.
+    m = re.search(
+        r"(?is)\bskills?\b[:\n](.{0,400}?)(?:\n\s*\n|\n[A-Z][a-z]+\s*\n|$)",
+        raw_text,
+    )
+    if m:
+        chunk = m.group(1)
+        parts = re.split(r"[,\n;•·|]", chunk)
+        for p in parts:
+            t = p.strip(" .-\t")
+            if 2 <= len(t) <= 30 and not t.lower().startswith(("skill",)):
+                skills.append(t)
+    # 2) Always also include any recognized common (tech) skills found anywhere.
+    tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9+.#]{1,20}\b", raw_text)
+    for t in tokens:
+        if t.lower() in _COMMON_SKILLS and t not in skills:
+            skills.append(t)
+    # De-dupe case-insensitively, keep order, cap the list.
+    seen = set()
+    out = []
+    for s in skills:
+        k = s.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(s)
+    return out[:20]
 
 
 # ----------------------------------------------------------------------------
@@ -185,24 +273,38 @@ def _score_fallback(profile: CVProfile, job: JobPosting) -> RelevanceResult:
 # ----------------------------------------------------------------------------
 # Tailored document generation (requires AI)
 # ----------------------------------------------------------------------------
+# Supported output languages for generated documents. German is the default.
+LANGUAGES = {"de": "German", "en": "English"}
+DEFAULT_LANGUAGE = "de"
+
+
+def _language_name(language: str) -> str:
+    return LANGUAGES.get((language or DEFAULT_LANGUAGE).lower(), LANGUAGES[DEFAULT_LANGUAGE])
+
+
 _CV_SYSTEM = """You are an expert resume writer. Rewrite the candidate's CV to
 best fit the target job while staying strictly truthful — never invent
 experience, skills, employers or dates. You may re-order, re-emphasize and
 re-phrase real content to highlight relevance. Output a clean, ATS-friendly
 plain-text CV with clear sections (Contact, Summary, Skills, Experience,
-Education, Languages). No markdown fences."""
+Education, Languages). No markdown fences.
+Write the ENTIRE CV in {lang}, regardless of the language of the source CV or
+the job posting."""
 
 
-def generate_cv(profile: CVProfile, job: JobPosting) -> tuple[str, bool]:
-    """Return (cv_text, ai_used).
+def generate_cv(
+    profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE
+) -> tuple[str, bool]:
+    """Return (cv_text, ai_used) with the document written in `language`.
 
     Uses AI when available; on any AI failure (no key, quota, rate limit) falls
     back to a plain, non-tailored CV built from the profile. ai_used=False tells
     callers to warn the user the document was NOT AI-tailored.
     """
     settings = get_settings()
+    lang = _language_name(language)
     if not settings.ai_enabled:
-        log.info("generate_cv: AI disabled — using non-AI fallback CV")
+        log.info("generate_cv: AI disabled — using non-AI fallback CV (%s)", lang)
         return _cv_fallback(profile, job), False
 
     user = (
@@ -211,22 +313,19 @@ def generate_cv(profile: CVProfile, job: JobPosting) -> tuple[str, bool]:
         f"CANDIDATE CV (source of truth):\n{profile.raw_text[:settings.ai_gen_cv_chars]}"
     )
     try:
-        return get_ai_client().complete_text(_CV_SYSTEM, user), True
+        return get_ai_client().complete_text(_CV_SYSTEM.format(lang=lang), user), True
     except Exception as e:
         log.warning("generate_cv: AI failed (%s) — using non-AI fallback", _brief(e))
         return _cv_fallback(profile, job), False
 
 
-_FALLBACK_NOTICE = (
-    "NOTE: This document was generated WITHOUT AI (OpenAI unavailable). It is a "
-    "plain, non-tailored draft assembled from your CV profile. Review and edit "
-    "before sending. Add OpenAI credit to enable AI-tailored documents."
-)
-
-
 def _cv_fallback(profile: CVProfile, job: JobPosting) -> str:
-    """Build a plain, honest CV from the parsed profile — no invented content."""
-    lines: list[str] = [f"[{_FALLBACK_NOTICE}]", ""]
+    """Build a plain, honest CV from the parsed profile — no invented content.
+
+    The non-AI status is surfaced in the web UI (via the ai_generated flag),
+    not inside the document, so the PDF stays clean and usable as-is.
+    """
+    lines: list[str] = []
     if profile.full_name:
         lines.append(profile.full_name)
     contact = " | ".join(
@@ -276,27 +375,32 @@ def _cv_fallback(profile: CVProfile, job: JobPosting) -> str:
         lines.append("")
     if profile.languages:
         lines += ["LANGUAGES", ", ".join(profile.languages), ""]
-    # Fall back to raw CV text if the structured profile is sparse.
-    if len(lines) <= 6 and profile.raw_text:
+    # Fall back to raw CV text if the structured profile is sparse (no skills,
+    # experience, education or languages extracted).
+    if len(lines) <= 4 and profile.raw_text:
         lines += ["", profile.raw_text]
     return "\n".join(lines).strip()
 
 
 _LETTER_SYSTEM = """You are an expert career coach writing a concise, sincere
-motivation letter (cover letter) in the same language as the job posting
-(German posting -> German letter, otherwise English). Keep it to 3-4 short
-paragraphs. Reference the specific role and company, connect the candidate's
-real, relevant experience to the role's needs, and close with a call to action.
-Stay truthful — do not invent facts. Output only the letter body text."""
+motivation letter (cover letter). Keep it to 3-4 short paragraphs. Reference the
+specific role and company, connect the candidate's real, relevant experience to
+the role's needs, and close with a call to action. Stay truthful — do not invent
+facts. Output only the letter body text.
+Write the ENTIRE letter in {lang}, regardless of the language of the CV or the
+job posting."""
 
 
-def generate_letter(profile: CVProfile, job: JobPosting) -> tuple[str, bool]:
-    """Return (letter_text, ai_used). Falls back to a plain template when AI
-    is unavailable, same contract as generate_cv."""
+def generate_letter(
+    profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE
+) -> tuple[str, bool]:
+    """Return (letter_text, ai_used) written in `language`. Falls back to a
+    plain template when AI is unavailable, same contract as generate_cv."""
     settings = get_settings()
+    lang = _language_name(language)
     if not settings.ai_enabled:
-        log.info("generate_letter: AI disabled — using non-AI fallback letter")
-        return _letter_fallback(profile, job), False
+        log.info("generate_letter: AI disabled — using non-AI fallback letter (%s)", lang)
+        return _letter_fallback(profile, job, language), False
 
     user = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
@@ -308,18 +412,24 @@ def generate_letter(profile: CVProfile, job: JobPosting) -> tuple[str, bool]:
         f"Experience highlights:\n{profile.raw_text[:settings.ai_gen_letter_cv_chars]}"
     )
     try:
-        return get_ai_client().complete_text(_LETTER_SYSTEM, user), True
+        return get_ai_client().complete_text(_LETTER_SYSTEM.format(lang=lang), user), True
     except Exception as e:
         log.warning("generate_letter: AI failed (%s) — using non-AI fallback", _brief(e))
-        return _letter_fallback(profile, job), False
+        return _letter_fallback(profile, job, language), False
 
 
-def _letter_fallback(profile: CVProfile, job: JobPosting) -> str:
-    """Plain, honest motivation letter template filled from the profile."""
+def _letter_fallback(profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE) -> str:
+    """Plain, honest motivation letter template filled from the profile.
+
+    Provides a German template by default (or when language='de'), English
+    otherwise, so the non-AI fallback still respects the chosen language.
+    """
     name = profile.full_name or "the candidate"
     company = job.company or "your company"
     role = job.title or "the advertised role"
     top_skills = ", ".join(profile.skills[:6]) if profile.skills else "my background"
+    if (language or DEFAULT_LANGUAGE).lower() == "de":
+        return _letter_fallback_de(profile, job, name, company, role, top_skills)
     body = (
         f"Dear Hiring Team at {company},\n\n"
         f"I am writing to express my interest in the {role} position. Based on my "
@@ -332,7 +442,25 @@ def _letter_fallback(profile: CVProfile, job: JobPosting) -> str:
         "I would welcome the opportunity to discuss how my background fits this "
         f"role. Thank you for your consideration.\n\nSincerely,\n{name}"
     )
-    return f"[{_FALLBACK_NOTICE}]\n\n{body}"
+    return body
+
+
+def _letter_fallback_de(profile, job, name, company, role, top_skills) -> str:
+    """German plain-template fallback letter."""
+    body = (
+        f"Sehr geehrtes Team von {company},\n\n"
+        f"hiermit bewerbe ich mich auf die Position als {role}. Mit meiner "
+        f"Erfahrung und meinen Kenntnissen ({top_skills}) bin ich überzeugt, "
+        f"einen wertvollen Beitrag zu Ihrem Team leisten zu können.\n\n"
+    )
+    if profile.summary:
+        body += profile.summary.strip() + "\n\n"
+    body += (
+        "Über die Gelegenheit zu einem persönlichen Gespräch würde ich mich sehr "
+        f"freuen. Vielen Dank für Ihre Zeit und Berücksichtigung.\n\n"
+        f"Mit freundlichen Grüßen,\n{name}"
+    )
+    return body
 
 
 # ----------------------------------------------------------------------------

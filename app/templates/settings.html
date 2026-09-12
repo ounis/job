@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Settings — Job Hunter{% endblock %}
+{% block content %}
+
+<div class="settings-head">
+  <a href="/" class="muted back-link">&larr; Dashboard</a>
+  <h1>Settings</h1>
+  <div class="settings-status">
+    <span class="chip {{ 'chip-on' if status.ai_enabled else 'chip-off' }}">
+      {{ 'AI enabled' if status.ai_enabled else 'AI off — heuristic only' }}
+    </span>
+    <span class="chip">Sources: {{ status.providers|join(', ') or 'none' }}</span>
+    <span class="chip">CV: {{ status.active_cv or 'none found' }}</span>
+  </div>
+  <p class="muted small">
+    Changes save instantly — no restart. API keys are write-only: they show as
+    “set” but are never displayed again.
+  </p>
+</div>
+
+<form method="post" action="/settings" class="settings-form">
+  {% for group in groups %}
+  <div class="settings-card">
+    <div class="settings-card-head">
+      <h2>{{ group.name }}</h2>
+      {% if group.desc %}<p class="muted small">{{ group.desc }}</p>{% endif %}
+    </div>
+
+    {% for f in group.fields %}
+    <div class="setting-row">
+      <div class="setting-label">
+        <label for="set-{{ f.key }}">{{ f.label }}</label>
+        {% if f.help %}<span class="muted small">{{ f.help }}</span>{% endif %}
+      </div>
+      <div class="setting-input">
+
+        {% if f.type == 'bool' %}
+        <label class="toggle">
+          <input type="checkbox" name="{{ f.key }}" id="set-{{ f.key }}"
+                 {{ 'checked' if f.value else '' }} />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+
+        {% elif f.type == 'providers' %}
+        <div class="provider-list">
+          {% for opt in f.options %}
+          <label class="provider-opt {{ 'disabled' if not opt.available else '' }}">
+            <input type="checkbox" name="{{ f.key }}" value="{{ opt.value }}"
+                   {{ 'checked' if opt.value in f.selected else '' }}
+                   {{ 'disabled' if not opt.available else '' }} />
+            <span>{{ opt.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+
+        {% elif f.type == 'int' %}
+        <div class="input-with-unit">
+          <input type="number" name="{{ f.key }}" id="set-{{ f.key }}"
+                 value="{{ f.value }}"
+                 {% if f.min is defined %}min="{{ f.min }}"{% endif %}
+                 {% if f.max is defined %}max="{{ f.max }}"{% endif %} />
+          {% if f.unit %}<span class="unit muted">{{ f.unit }}</span>{% endif %}
+        </div>
+
+        {% elif f.type == 'select' %}
+        <select name="{{ f.key }}" id="set-{{ f.key }}">
+          {% for opt in f.options %}
+          <option value="{{ opt }}" {{ 'selected' if opt == f.value else '' }}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+
+        {% elif f.type == 'secret' %}
+        <div class="secret-field">
+          <input type="password" name="{{ f.key }}" id="set-{{ f.key }}"
+                 placeholder="{{ 'set — leave blank to keep' if f.is_set else 'not set' }}"
+                 autocomplete="off" />
+          <button type="button" class="btn btn-outline small reveal-btn"
+                  data-target="set-{{ f.key }}">show</button>
+        </div>
+
+        {% else %}
+        <input type="text" name="{{ f.key }}" id="set-{{ f.key }}" value="{{ f.value }}" />
+        {% endif %}
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="settings-actions">
+    <button type="submit" class="btn btn-primary">Save settings</button>
+    <a href="/" class="btn btn-ghost">Cancel</a>
+  </div>
+</form>
+
+<script>
+  document.querySelectorAll('.reveal-btn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var inp = document.getElementById(b.dataset.target);
+      if (!inp) return;
+      var show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      b.textContent = show ? 'hide' : 'show';
+    });
+  });
+</script>
+
+{% endblock %}

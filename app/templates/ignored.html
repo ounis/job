@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Ignored jobs — Job Hunter{% endblock %}
+{% block content %}
+
+<a href="/" class="muted">&larr; back to dashboard</a>
+
+<section class="panel">
+  <div class="panel-head">
+    <h1>Ignored jobs <span class="muted">({{ ignored|length }})</span></h1>
+  </div>
+  <p class="muted">
+    These jobs are hidden from your matches. Restore one to move it back into
+    the matched list on your next view.
+  </p>
+
+  {% if ignored %}
+  <table class="jobs">
+    <thead>
+      <tr><th></th><th>Title</th><th>Company</th><th>Location</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for job in ignored %}
+      <tr class="row-ignored">
+        <td><span class="badge badge-ignored">ignored</span></td>
+        <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
+        <td>{{ job.posting.company }}</td>
+        <td>{{ job.posting.location }}</td>
+        <td>
+          <form method="post" action="/jobs/{{ job.posting.key }}/unignore">
+            <button class="btn btn-ghost small">Restore</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No ignored jobs.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

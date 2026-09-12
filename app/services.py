@@ -175,16 +175,18 @@ def _ai_score_budget(profile: CVProfile, fresh: list, settings) -> set[str]:
     return {p.key for p in top}
 
 
-def apply_to_job(key: str) -> dict:
-    """Generate tailored documents + payload for a job and mark it applied.
+def prepare_application(key: str, language: str = "de") -> dict:
+    """Generate tailored documents + payload for a job and mark it 'prepared'.
 
-    Returns dict with the application URL and generated artifact paths.
+    `language` controls the output language of the CV + letter ("de" default,
+    "en" for English). This does NOT submit anything. Returns a dict with the
+    application URL, generated artifact paths and the ai_generated flag.
     """
     settings = get_settings()
-    log.info("Applying to job %s ...", key)
+    log.info("Preparing application for job %s (language=%s) ...", key, language)
     job = db.get_job(key)
     if job is None:
-        log.error("Apply failed: job not found %s", key)
+        log.error("Prepare failed: job not found %s", key)
         raise ProfileError(f"Job not found: {key}")
 
     profile = ensure_profile()
@@ -193,15 +195,15 @@ def apply_to_job(key: str) -> dict:
     # non-AI drafts when OpenAI is unavailable and report ai_used=False so we
     # can warn the user the documents are not AI-tailored.
     log.info("Generating CV for %r @ %r", posting.title, posting.company)
-    cv_text, cv_ai = ai_ops.generate_cv(profile, posting)
+    cv_text, cv_ai = ai_ops.generate_cv(profile, posting, language)
     log.debug("Generated CV (%d chars, ai=%s)", len(cv_text), cv_ai)
     log.info("Generating motivation letter")
-    letter_text, letter_ai = ai_ops.generate_letter(profile, posting)
+    letter_text, letter_ai = ai_ops.generate_letter(profile, posting, language)
     log.debug("Generated letter (%d chars, ai=%s)", len(letter_text), letter_ai)
     ai_used = cv_ai and letter_ai
     if not ai_used:
         log.warning(
-            "Apply for %s used NON-AI fallback documents (cv_ai=%s letter_ai=%s)",
+            "Prepare for %s used NON-AI fallback documents (cv_ai=%s letter_ai=%s)",
             key, cv_ai, letter_ai,
         )
 
@@ -220,6 +222,7 @@ def apply_to_job(key: str) -> dict:
         "relevance_score": job.relevance.score,
         "keywords_used": ai_ops.derive_keywords(profile),
         "ai_generated": ai_used,
+        "language": language,
     }
 
     db.save_application(
@@ -230,7 +233,7 @@ def apply_to_job(key: str) -> dict:
         cv_pdf_path=str(cv_pdf),
         letter_pdf_path=str(letter_pdf),
     )
-    log.info("Marked %s as applied and stored artifacts", key)
+    log.info("Prepared %s and stored artifacts (status=prepared)", key)
 
     return {
         "url": posting.url,
@@ -238,6 +241,22 @@ def apply_to_job(key: str) -> dict:
         "letter_pdf": str(letter_pdf),
         "ai_generated": ai_used,
     }
+
+
+def mark_job_applied(key: str) -> str:
+    """Confirm the user submitted a prepared application; records the date."""
+    ts = db.mark_applied(key)
+    if ts is None:
+        log.error("Mark-applied failed: job not found %s", key)
+        raise ProfileError(f"Job not found: {key}")
+    log.info("Marked %s as applied at %s", key, ts)
+    return ts
+
+
+def unmark_job_applied(key: str) -> None:
+    """Move an applied job back to 'prepared' (clears the application date)."""
+    db.unmark_applied(key)
+    log.info("Reverted %s from applied back to prepared", key)
 
 
 def ignore_job(key: str) -> None:
