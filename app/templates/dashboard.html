@@ -32,6 +32,27 @@
   </div>
   {% endif %}
 
+  <div class="cv-picker">
+    {% if detected_cvs %}
+    <form method="post" action="/cv/select" class="cv-form">
+      <label for="cv-select">CV file:</label>
+      <select name="cv" id="cv-select">
+        {% for cv in detected_cvs %}
+        <option value="{{ cv.path }}" {{ 'selected' if cv.active else '' }}>
+          {{ cv.name }}{{ ' (active)' if cv.active else '' }}
+        </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-ghost small">Use this CV</button>
+      <span class="muted small">{{ detected_cvs|length }} file(s) found in data/</span>
+    </form>
+    {% else %}
+    <p class="muted small">
+      No CV files found in <code>data/</code>. Drop a pdf, docx, txt or md file there.
+    </p>
+    {% endif %}
+  </div>
+
   <div class="stats">
     <span>Matched: <strong>{{ matched|length }}</strong></span>
     <span>Applied: <strong>{{ counts.get('applied', 0) }}</strong></span>

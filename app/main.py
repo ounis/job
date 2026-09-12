@@ -21,7 +21,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import db, services
-from .config import GENERATED_DIR, STATIC_DIR, TEMPLATES_DIR, get_settings
+from pathlib import Path
+
+from .config import (
+    GENERATED_DIR,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+    discover_cv_files,
+    get_settings,
+    set_cv_path,
+)
 from .logging_setup import configure_logging, get_logger
 from .models import JobStatus
 
@@ -52,6 +61,12 @@ def dashboard(request: Request):
     profile = db.load_profile()
     counts = db.counts_by_status()
 
+    active_cv = settings.cv_full_path
+    detected_cvs = [
+        {"name": p.name, "path": str(p.resolve()), "active": p.resolve() == active_cv.resolve()}
+        for p in discover_cv_files()
+    ]
+
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -63,6 +78,8 @@ def dashboard(request: Request):
             "counts": counts,
             "settings": settings,
             "ai_enabled": settings.ai_enabled,
+            "detected_cvs": detected_cvs,
+            "active_cv_name": active_cv.name if active_cv.exists() else None,
             "flash": request.query_params.get("msg"),
         },
     )
@@ -91,17 +108,38 @@ def apply(keys: list[str] = Form(default=[])):
     if not keys:
         return _redirect_with_msg("No jobs selected.")
     applied, errors = [], []
+    used_fallback = False
     for key in keys:
         try:
-            services.apply_to_job(key)
+            result = services.apply_to_job(key)
             applied.append(key)
+            if not result.get("ai_generated", True):
+                used_fallback = True
         except services.ProfileError as e:
             errors.append(str(e))
             break  # config errors will repeat; stop early
     msg = f"Applied to {len(applied)} job(s)."
+    if used_fallback:
+        msg += (
+            " WARNING: OpenAI was unavailable — documents are plain, NON-AI "
+            "drafts (not tailored). Add OpenAI credit and re-apply for tailored versions."
+        )
     if errors:
         msg += f" Stopped: {errors[0]}"
     return _redirect_with_msg(msg)
+
+
+@app.post("/cv/select")
+def select_cv(cv: str = Form(...)):
+    # Only allow selecting a file that discovery actually found, so an arbitrary
+    # path can't be written into .env via this endpoint.
+    choice = Path(cv).resolve()
+    detected = {p.resolve() for p in discover_cv_files()}
+    if choice not in detected:
+        return _redirect_with_msg("Unknown CV file selected.")
+    set_cv_path(choice)
+    log.info("Active CV set to %s", choice.name)
+    return _redirect_with_msg(f"Active CV set to {choice.name}. Run a scan to parse it.")
 
 
 @app.post("/jobs/{key:path}/ignore")

@@ -30,6 +30,8 @@ class OpenAIClient(AIClient):
         settings = get_settings()
         self._model = settings.openai_model
         self._client = OpenAI(api_key=settings.openai_api_key)
+        self._max_tokens_json = settings.ai_max_tokens_json
+        self._max_tokens_text = settings.ai_max_tokens_text
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         resp = self._client.chat.completions.create(
@@ -40,6 +42,7 @@ class OpenAIClient(AIClient):
             ],
             response_format={"type": "json_object"},
             temperature=0.2,
+            max_tokens=self._max_tokens_json,
         )
         content = resp.choices[0].message.content or "{}"
         return json.loads(content)
@@ -52,6 +55,7 @@ class OpenAIClient(AIClient):
                 {"role": "user", "content": user},
             ],
             temperature=0.4,
+            max_tokens=self._max_tokens_text,
         )
         return (resp.choices[0].message.content or "").strip()
 

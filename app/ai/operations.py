@@ -51,7 +51,7 @@ def parse_cv(raw_text: str) -> CVProfile:
         client = get_ai_client()
         data = client.complete_json(
             _PARSE_SYSTEM,
-            f"CV TEXT:\n\n{raw_text[:12000]}",
+            f"CV TEXT:\n\n{raw_text[:settings.ai_parse_cv_chars]}",
         )
     except Exception as e:
         log.warning("AI CV parse failed (%s); using heuristic fallback", _brief(e))
@@ -144,7 +144,7 @@ def score_relevance(profile: CVProfile, job: JobPosting) -> RelevanceResult:
         f"Title: {job.title}\n"
         f"Company: {job.company}\n"
         f"Location: {job.location}\n"
-        f"Description: {job.description[:4000]}"
+        f"Description: {job.description[:settings.ai_score_desc_chars]}"
     )
     try:
         client = get_ai_client()
@@ -193,16 +193,93 @@ plain-text CV with clear sections (Contact, Summary, Skills, Experience,
 Education, Languages). No markdown fences."""
 
 
-def generate_cv(profile: CVProfile, job: JobPosting) -> str:
+def generate_cv(profile: CVProfile, job: JobPosting) -> tuple[str, bool]:
+    """Return (cv_text, ai_used).
+
+    Uses AI when available; on any AI failure (no key, quota, rate limit) falls
+    back to a plain, non-tailored CV built from the profile. ai_used=False tells
+    callers to warn the user the document was NOT AI-tailored.
+    """
+    settings = get_settings()
+    if not settings.ai_enabled:
+        log.info("generate_cv: AI disabled — using non-AI fallback CV")
+        return _cv_fallback(profile, job), False
+
     user = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
-        f"Description: {job.description[:4000]}\n\n"
-        f"CANDIDATE CV (source of truth):\n{profile.raw_text[:12000]}"
+        f"Description: {job.description[:settings.ai_gen_desc_chars]}\n\n"
+        f"CANDIDATE CV (source of truth):\n{profile.raw_text[:settings.ai_gen_cv_chars]}"
     )
     try:
-        return get_ai_client().complete_text(_CV_SYSTEM, user)
+        return get_ai_client().complete_text(_CV_SYSTEM, user), True
     except Exception as e:
-        raise AIUnavailable(_ai_error_message(e)) from e
+        log.warning("generate_cv: AI failed (%s) — using non-AI fallback", _brief(e))
+        return _cv_fallback(profile, job), False
+
+
+_FALLBACK_NOTICE = (
+    "NOTE: This document was generated WITHOUT AI (OpenAI unavailable). It is a "
+    "plain, non-tailored draft assembled from your CV profile. Review and edit "
+    "before sending. Add OpenAI credit to enable AI-tailored documents."
+)
+
+
+def _cv_fallback(profile: CVProfile, job: JobPosting) -> str:
+    """Build a plain, honest CV from the parsed profile — no invented content."""
+    lines: list[str] = [f"[{_FALLBACK_NOTICE}]", ""]
+    if profile.full_name:
+        lines.append(profile.full_name)
+    contact = " | ".join(
+        p for p in (profile.email, profile.phone, profile.location) if p
+    )
+    if contact:
+        lines.append(contact)
+    if profile.headline:
+        lines.append(profile.headline)
+    lines.append("")
+    lines.append(f"Target role: {job.title} at {job.company}".strip())
+    lines.append("")
+    if profile.summary:
+        lines += ["SUMMARY", profile.summary, ""]
+    if profile.skills:
+        lines += ["SKILLS", ", ".join(profile.skills), ""]
+    if profile.experience:
+        lines.append("EXPERIENCE")
+        for e in profile.experience:
+            if not isinstance(e, dict):
+                continue
+            head = " — ".join(
+                str(e.get(k, "")).strip()
+                for k in ("title", "company", "period")
+                if e.get(k)
+            )
+            if head:
+                lines.append(head)
+            hl = e.get("highlights")
+            if isinstance(hl, list):
+                lines += [f"  - {h}" for h in hl if h]
+            elif hl:
+                lines.append(f"  - {hl}")
+        lines.append("")
+    if profile.education:
+        lines.append("EDUCATION")
+        for ed in profile.education:
+            if not isinstance(ed, dict):
+                continue
+            row = " — ".join(
+                str(ed.get(k, "")).strip()
+                for k in ("degree", "institution", "period")
+                if ed.get(k)
+            )
+            if row:
+                lines.append(row)
+        lines.append("")
+    if profile.languages:
+        lines += ["LANGUAGES", ", ".join(profile.languages), ""]
+    # Fall back to raw CV text if the structured profile is sparse.
+    if len(lines) <= 6 and profile.raw_text:
+        lines += ["", profile.raw_text]
+    return "\n".join(lines).strip()
 
 
 _LETTER_SYSTEM = """You are an expert career coach writing a concise, sincere
@@ -213,20 +290,49 @@ real, relevant experience to the role's needs, and close with a call to action.
 Stay truthful — do not invent facts. Output only the letter body text."""
 
 
-def generate_letter(profile: CVProfile, job: JobPosting) -> str:
+def generate_letter(profile: CVProfile, job: JobPosting) -> tuple[str, bool]:
+    """Return (letter_text, ai_used). Falls back to a plain template when AI
+    is unavailable, same contract as generate_cv."""
+    settings = get_settings()
+    if not settings.ai_enabled:
+        log.info("generate_letter: AI disabled — using non-AI fallback letter")
+        return _letter_fallback(profile, job), False
+
     user = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
         f"Location: {job.location}\n"
-        f"Description: {job.description[:4000]}\n\n"
+        f"Description: {job.description[:settings.ai_gen_desc_chars]}\n\n"
         f"CANDIDATE:\nName: {profile.full_name}\n"
         f"Summary: {profile.summary}\n"
         f"Skills: {', '.join(profile.skills)}\n"
-        f"Experience highlights:\n{profile.raw_text[:6000]}"
+        f"Experience highlights:\n{profile.raw_text[:settings.ai_gen_letter_cv_chars]}"
     )
     try:
-        return get_ai_client().complete_text(_LETTER_SYSTEM, user)
+        return get_ai_client().complete_text(_LETTER_SYSTEM, user), True
     except Exception as e:
-        raise AIUnavailable(_ai_error_message(e)) from e
+        log.warning("generate_letter: AI failed (%s) — using non-AI fallback", _brief(e))
+        return _letter_fallback(profile, job), False
+
+
+def _letter_fallback(profile: CVProfile, job: JobPosting) -> str:
+    """Plain, honest motivation letter template filled from the profile."""
+    name = profile.full_name or "the candidate"
+    company = job.company or "your company"
+    role = job.title or "the advertised role"
+    top_skills = ", ".join(profile.skills[:6]) if profile.skills else "my background"
+    body = (
+        f"Dear Hiring Team at {company},\n\n"
+        f"I am writing to express my interest in the {role} position. Based on my "
+        f"experience and skills ({top_skills}), I believe I can contribute "
+        f"effectively to your team.\n\n"
+    )
+    if profile.summary:
+        body += profile.summary.strip() + "\n\n"
+    body += (
+        "I would welcome the opportunity to discuss how my background fits this "
+        f"role. Thank you for your consideration.\n\nSincerely,\n{name}"
+    )
+    return f"[{_FALLBACK_NOTICE}]\n\n{body}"
 
 
 # ----------------------------------------------------------------------------

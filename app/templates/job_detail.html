@@ -45,6 +45,13 @@
 {% if application %}
 <section class="panel">
   <h2>Generated application</h2>
+  {% if application.payload.ai_generated == false %}
+  <div class="warn">
+    These documents were generated <strong>without AI</strong> (OpenAI was
+    unavailable). They are plain, non-tailored drafts — review and edit before
+    sending. Add OpenAI credit and re-apply to get AI-tailored versions.
+  </div>
+  {% endif %}
   <p>
     <a class="btn" href="/files/{{ application.cv_pdf_path.split('/')[-1].split('\\')[-1] }}" target="_blank">Download tailored CV (PDF)</a>
     <a class="btn" href="/files/{{ application.letter_pdf_path.split('/')[-1].split('\\')[-1] }}" target="_blank">Download motivation letter (PDF)</a>

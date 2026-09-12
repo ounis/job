@@ -103,21 +103,36 @@ async def run_scan(force_profile: bool = False) -> dict:
             continue
         log.info("Provider %r returned %d postings", provider.name, len(postings))
         fetched += len(postings)
+
+        # Collect the new (unseen) postings for this provider first.
+        fresh = []
         for posting in postings:
             if posting.key in seen:
                 log.debug("Skip already-seen %s (%s)", posting.key, posting.title)
                 skipped_seen += 1
                 continue
-            relevance = ai_ops.score_relevance(profile, posting)
+            fresh.append(posting)
+            seen.add(posting.key)
+
+        # Token-saving pre-filter: when AI is enabled and ai_prefilter is on,
+        # cheaply heuristic-score every fresh posting, then spend AI scoring
+        # tokens only on the top N candidates. The rest keep their heuristic
+        # score. This avoids one AI call per job (the dominant scan cost).
+        ai_budget = _ai_score_budget(profile, fresh, settings)
+
+        for posting in fresh:
+            if posting.key in ai_budget:
+                relevance = ai_ops.score_relevance(profile, posting)
+            else:
+                relevance = ai_ops._score_fallback(profile, posting)
             log.debug(
-                "Scored %d | %s @ %s | matched=%s",
+                "Scored %d | %s @ %s | matched=%s (ai=%s)",
                 relevance.score, posting.title, posting.company,
-                relevance.matched_skills,
+                relevance.matched_skills, posting.key in ai_budget,
             )
             db.upsert_job(
                 ScoredJob(posting=posting, status=JobStatus.NEW, relevance=relevance)
             )
-            seen.add(posting.key)
             new_scored += 1
 
     log.info(
@@ -134,6 +149,32 @@ async def run_scan(force_profile: bool = False) -> dict:
     }
 
 
+def _ai_score_budget(profile: CVProfile, fresh: list, settings) -> set[str]:
+    """Decide which postings get a (costly) AI relevance score.
+
+    Returns a set of posting keys. When prefiltering is off or AI is disabled,
+    behavior matches the old path: AI-score everything (or nothing, resp.).
+    Otherwise rank by the cheap heuristic and pick the top N.
+    """
+    if not settings.ai_enabled or not settings.ai_score:
+        return set()  # pure heuristic scoring; no AI tokens spent during scan
+    if not settings.ai_prefilter or settings.ai_score_top_n <= 0:
+        return {p.key for p in fresh}
+
+    ranked = sorted(
+        fresh,
+        key=lambda p: ai_ops._score_fallback(profile, p).score,
+        reverse=True,
+    )
+    top = ranked[: settings.ai_score_top_n]
+    log.info(
+        "AI-scoring top %d of %d fresh jobs (heuristic pre-filter); "
+        "remaining keep heuristic score",
+        len(top), len(fresh),
+    )
+    return {p.key for p in top}
+
+
 def apply_to_job(key: str) -> dict:
     """Generate tailored documents + payload for a job and mark it applied.
 
@@ -145,24 +186,24 @@ def apply_to_job(key: str) -> dict:
     if job is None:
         log.error("Apply failed: job not found %s", key)
         raise ProfileError(f"Job not found: {key}")
-    if not settings.ai_enabled:
-        log.error("Apply blocked: OPENAI_API_KEY not set")
-        raise ProfileError(
-            "Generating a tailored CV and letter requires OPENAI_API_KEY in .env."
-        )
 
     profile = ensure_profile()
     posting = job.posting
-    try:
-        log.info("Generating tailored CV for %r @ %r", posting.title, posting.company)
-        cv_text = ai_ops.generate_cv(profile, posting)
-        log.debug("Generated CV (%d chars)", len(cv_text))
-        log.info("Generating motivation letter")
-        letter_text = ai_ops.generate_letter(profile, posting)
-        log.debug("Generated letter (%d chars)", len(letter_text))
-    except ai_ops.AIUnavailable as e:
-        log.error("Apply failed for %s: %s", key, e)
-        raise ProfileError(str(e)) from e
+    # generate_cv / generate_letter never raise now: they fall back to plain,
+    # non-AI drafts when OpenAI is unavailable and report ai_used=False so we
+    # can warn the user the documents are not AI-tailored.
+    log.info("Generating CV for %r @ %r", posting.title, posting.company)
+    cv_text, cv_ai = ai_ops.generate_cv(profile, posting)
+    log.debug("Generated CV (%d chars, ai=%s)", len(cv_text), cv_ai)
+    log.info("Generating motivation letter")
+    letter_text, letter_ai = ai_ops.generate_letter(profile, posting)
+    log.debug("Generated letter (%d chars, ai=%s)", len(letter_text), letter_ai)
+    ai_used = cv_ai and letter_ai
+    if not ai_used:
+        log.warning(
+            "Apply for %s used NON-AI fallback documents (cv_ai=%s letter_ai=%s)",
+            key, cv_ai, letter_ai,
+        )
 
     cv_pdf = render_cv_pdf(cv_text, posting)
     letter_pdf = render_letter_pdf(letter_text, posting, profile)
@@ -178,6 +219,7 @@ def apply_to_job(key: str) -> dict:
         "candidate_email": profile.email,
         "relevance_score": job.relevance.score,
         "keywords_used": ai_ops.derive_keywords(profile),
+        "ai_generated": ai_used,
     }
 
     db.save_application(
@@ -194,6 +236,7 @@ def apply_to_job(key: str) -> dict:
         "url": posting.url,
         "cv_pdf": str(cv_pdf),
         "letter_pdf": str(letter_pdf),
+        "ai_generated": ai_used,
     }
 
 

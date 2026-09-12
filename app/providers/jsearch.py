@@ -8,9 +8,11 @@ Requires a RapidAPI key (subscribe to JSearch on RapidAPI; free tier available):
   https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch
 
 Endpoint:
-  GET https://jsearch.p.rapidapi.com/search
+  GET https://jsearch.p.rapidapi.com/search-v2
     headers: x-rapidapi-key, x-rapidapi-host
     params : query, page, num_pages, country, date_posted
+    NOTE: /search-v2 nests results under data.jobs (the older /search returned
+          data as a flat list). _normalize handles the item shape either way.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from .base import JobProvider
 
 log = get_logger("app.providers.jsearch")
 
-API_URL = "https://jsearch.p.rapidapi.com/search"
+API_URL = "https://jsearch.p.rapidapi.com/search-v2"
 API_HOST = "jsearch.p.rapidapi.com"
 RESULTS_PER_PAGE = 10  # JSearch returns ~10 per page
 
@@ -34,6 +36,7 @@ class JSearchProvider(JobProvider):
     def __init__(self) -> None:
         settings = get_settings()
         self.api_key = settings.rapidapi_key
+        self.max_pages = settings.jsearch_max_pages
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
@@ -59,6 +62,12 @@ class JSearchProvider(JobProvider):
             query = f"{terms} in Germany"
 
         num_pages = max(1, (limit + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE)
+        # Clamp to the plan's page limit (free tier = 1) to avoid errors/quota
+        # waste from requesting more pages than the subscription allows.
+        max_pages = max(1, self.max_pages)
+        if num_pages > max_pages:
+            log.info("Clamping num_pages %d -> %d (jsearch_max_pages)", num_pages, max_pages)
+            num_pages = max_pages
         headers = {
             "x-rapidapi-key": self.api_key,
             "x-rapidapi-host": API_HOST,
@@ -78,7 +87,13 @@ class JSearchProvider(JobProvider):
             resp.raise_for_status()
             data = resp.json()
 
-        raw = data.get("data", []) or []
+        # /search-v2 nests results under data.jobs (a dict); older /search
+        # returned data as a list directly. Handle both.
+        payload = data.get("data")
+        if isinstance(payload, dict):
+            raw = payload.get("jobs", []) or []
+        else:
+            raw = payload or []
         log.debug("JSearch returned %d raw items", len(raw))
         postings: list[JobPosting] = []
         for item in raw:
