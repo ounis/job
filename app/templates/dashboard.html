@@ -17,10 +17,16 @@
       {% endif %}
     </div>
     <form method="post" action="/scan" class="scan-form">
+      {% if detected_cvs %}
       <label class="check-inline">
-        <input type="checkbox" name="force_profile" value="true" />
-        re-parse CV
+        CV:
+        <select name="cv">
+          {% for cv in detected_cvs %}
+          <option value="{{ cv.path }}" {{ 'selected' if cv.active else '' }}>{{ cv.name }}</option>
+          {% endfor %}
+        </select>
       </label>
+      {% endif %}
       <button type="submit" class="btn btn-primary">Run scan</button>
     </form>
     <form method="post" action="/jobs/clear" class="scan-form"
@@ -36,26 +42,17 @@
   </div>
   {% endif %}
 
-  <div class="cv-picker">
-    {% if detected_cvs %}
-    <form method="post" action="/cv/select" class="cv-form">
-      <label for="cv-select">CV file:</label>
-      <select name="cv" id="cv-select">
-        {% for cv in detected_cvs %}
-        <option value="{{ cv.path }}" {{ 'selected' if cv.active else '' }}>
-          {{ cv.name }}{{ ' (active)' if cv.active else '' }}
-        </option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-ghost small">Use this CV</button>
-      <span class="muted small">{{ detected_cvs|length }} file(s) found in data/</span>
-    </form>
-    {% else %}
-    <p class="muted small">
-      No CV files found in <code>data/</code>. Drop a pdf, docx, txt or md file there.
-    </p>
-    {% endif %}
-  </div>
+  {% if detected_cvs %}
+  <p class="muted small cv-hint">
+    Active CV: <strong>{{ active_cv_name or 'none' }}</strong> —
+    choosing a different CV above and running a scan switches to it
+    ({{ detected_cvs|length }} found in data/).
+  </p>
+  {% else %}
+  <p class="muted small">
+    No CV files found in <code>data/</code>. Drop a pdf, docx, txt or md file there.
+  </p>
+  {% endif %}
 
   <div class="stats">
     <span>Matched: <strong>{{ matched|length }}</strong></span>

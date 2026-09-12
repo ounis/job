@@ -4,7 +4,19 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _strip_surrogates(text: str) -> str:
+    """Remove lone UTF-16 surrogate code points from a string.
+
+    Some job feeds return text with unpaired surrogates (e.g. a broken emoji
+    half like \\ud83c). Python/SQLite can't encode those to UTF-8, which crashed
+    inserts. Round-tripping through UTF-8 with 'ignore' drops only the bad bytes.
+    """
+    if not text:
+        return text
+    return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
 
 
 class JobStatus(str, Enum):
@@ -36,6 +48,16 @@ class JobPosting(BaseModel):
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     created: Optional[str] = None
+
+    @field_validator(
+        "provider", "external_id", "title", "company", "location",
+        "description", "url", "created", mode="before",
+    )
+    @classmethod
+    def _clean_str(cls, v):
+        # Strip lone surrogates from any incoming string so downstream encoding
+        # (SQLite insert, PDF render) never blows up on malformed feed text.
+        return _strip_surrogates(v) if isinstance(v, str) else v
 
     @property
     def key(self) -> str:

@@ -62,6 +62,7 @@ def configure_logging() -> None:
         log_path.write_text("", encoding="utf-8")
     except OSError:
         pass
+    file_handler = None
     try:
         file_handler = RotatingFileHandler(
             log_path,
@@ -84,10 +85,46 @@ def configure_logging() -> None:
         for noisy in ("httpx", "httpcore", "openai"):
             logging.getLogger(noisy).setLevel(logging.DEBUG)
 
+    # Route uvicorn's own loggers into our handlers too. Uvicorn sets up its
+    # loggers with propagate=False and its own handlers, so without this its
+    # startup and access lines show in the console but never reach job.log.
+    _attach_uvicorn(handler, file_handler, level)
+
     _CONFIGURED = True
     logging.getLogger("app").info(
         "Logging configured at level %s (file: %s)", level_name, log_path
     )
+
+
+# Handlers kept so we can (re)attach them to uvicorn's loggers, which are only
+# created once uvicorn starts — after configure_logging() runs at import time.
+_HANDLERS: list[logging.Handler] = []
+
+
+def _attach_uvicorn(console, file_h, level) -> None:
+    global _HANDLERS
+    _HANDLERS = [h for h in (console, file_h) if h is not None]
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.handlers.clear()
+        for h in _HANDLERS:
+            lg.addHandler(h)
+        lg.setLevel(level)
+        lg.propagate = False  # we own its handlers now; avoid double logging
+
+
+def attach_uvicorn_loggers() -> None:
+    """Re-attach our handlers to uvicorn's loggers.
+
+    Call this AFTER uvicorn has configured its logging (e.g. right after
+    uvicorn.run sets up, via a startup hook), because uvicorn replaces handlers
+    on its own loggers during initialization.
+    """
+    level = logging.getLogger().level
+    console = next((h for h in _HANDLERS if isinstance(h, logging.StreamHandler)
+                    and not isinstance(h, RotatingFileHandler)), None)
+    file_h = next((h for h in _HANDLERS if isinstance(h, RotatingFileHandler)), None)
+    _attach_uvicorn(console, file_h, level)
 
 
 def get_logger(name: str) -> logging.Logger:

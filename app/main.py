@@ -32,7 +32,7 @@ from .config import (
     set_cv_path,
     set_env_values,
 )
-from .logging_setup import configure_logging, get_logger
+from .logging_setup import attach_uvicorn_loggers, configure_logging, get_logger
 from .models import JobStatus
 
 configure_logging()
@@ -46,6 +46,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.on_event("startup")
 def _startup() -> None:
+    # Uvicorn configured its own loggers just before this fires — re-attach our
+    # console+file handlers so uvicorn's startup/access lines also land in job.log.
+    attach_uvicorn_loggers()
     db.init_db()
     s = get_settings()
     log.info("Job Hunter starting up")
@@ -89,9 +92,19 @@ def dashboard(request: Request):
 
 
 @app.post("/scan")
-async def scan(force_profile: bool = Form(False)):
+async def scan(force_profile: bool = Form(False), cv: str = Form("")):
+    # If a CV was chosen in the scan form, switch to it before scanning. A
+    # switch always forces a re-parse so the new CV's profile is actually used.
+    switched = False
+    if cv:
+        choice = Path(cv).resolve()
+        detected = {p.resolve() for p in discover_cv_files()}
+        if choice in detected and choice != get_settings().cv_full_path.resolve():
+            set_cv_path(choice)
+            switched = True
+            log.info("Scan: switched active CV to %s", choice.name)
     try:
-        summary = await services.run_scan(force_profile=force_profile)
+        summary = await services.run_scan(force_profile=force_profile or switched)
     except services.ProfileError as e:
         return _redirect_with_msg(str(e))
     except Exception as e:
@@ -176,7 +189,19 @@ def select_cv(cv: str = Form(...)):
         return _redirect_with_msg("Unknown CV file selected.")
     set_cv_path(choice)
     log.info("Active CV set to %s", choice.name)
-    return _redirect_with_msg(f"Active CV set to {choice.name}. Run a scan to parse it.")
+    # Immediately (re)parse the newly selected CV so the next scan uses it
+    # without needing the "re-parse CV" checkbox. Don't fail the switch if
+    # parsing hits an error (e.g. OpenAI down) — the heuristic still applies.
+    try:
+        services.ensure_profile(force=True)
+        return _redirect_with_msg(
+            f"Active CV set to {choice.name} and profile parsed. Run a scan for fresh matches."
+        )
+    except Exception as e:
+        log.warning("CV switch: profile parse failed: %s", e)
+        return _redirect_with_msg(
+            f"Active CV set to {choice.name}. Run a scan (with 're-parse CV') to use it."
+        )
 
 
 # Editable settings, grouped for the settings page. Each field is a dict so we
