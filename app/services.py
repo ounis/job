@@ -60,6 +60,26 @@ def ensure_profile(force: bool = False) -> CVProfile:
     return profile
 
 
+def _is_excluded(posting, settings) -> bool:
+    """True if a posting matches any configured exclusion (case-insensitive
+    substring match). Covers company, location, title, description and source."""
+    def _hit(haystack: str, needles: list[str]) -> bool:
+        h = (haystack or "").lower()
+        return any(n in h for n in needles)
+
+    if _hit(posting.company, settings.exclude_companies_list):
+        return True
+    if _hit(posting.location, settings.exclude_locations_list):
+        return True
+    if _hit(posting.title, settings.exclude_title_keywords_list):
+        return True
+    if _hit(posting.description, settings.exclude_description_keywords_list):
+        return True
+    if _hit(posting.source, settings.exclude_sources_list):
+        return True
+    return False
+
+
 async def run_scan(force_profile: bool = False) -> dict:
     """Run a full scan. Returns a small summary dict for the UI."""
     settings = get_settings()
@@ -114,6 +134,14 @@ async def run_scan(force_profile: bool = False) -> dict:
         postings = list(merged.values())
         log.info("Provider %r merged %d unique postings across %d location(s)",
                  provider.name, len(postings), len(locations))
+
+        # Apply user exclusions (companies, locations, title/description
+        # keywords, sources). Dropped jobs are neither scored nor stored.
+        before = len(postings)
+        postings = [p for p in postings if not _is_excluded(p, settings)]
+        dropped = before - len(postings)
+        if dropped:
+            log.info("Excluded %d posting(s) from %r by user filters", dropped, provider.name)
         fetched += len(postings)
 
         # Collect the new (unseen) postings for this provider first.

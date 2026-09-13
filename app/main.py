@@ -312,6 +312,24 @@ _SETTINGS_SPEC = [
         ],
     },
     {
+        "name": "Exclusions",
+        "desc": "Comma-separated, case-insensitive. A job is dropped during a "
+                "scan if it matches ANY of these (substring match).",
+        "fields": [
+            _f("EXCLUDE_COMPANIES", "exclude_companies", "text", "Exclude companies",
+               "Employer name contains any of these (e.g. a recruiter, a past employer)."),
+            _f("EXCLUDE_LOCATIONS", "exclude_locations", "text", "Exclude locations",
+               "City/region contains any of these (e.g. München, Hamburg)."),
+            _f("EXCLUDE_TITLE_KEYWORDS", "exclude_title_keywords", "text", "Exclude title keywords",
+               "Job title contains any of these (e.g. Werkstudent, Praktikum, intern)."),
+            _f("EXCLUDE_DESCRIPTION_KEYWORDS", "exclude_description_keywords", "text",
+               "Exclude description keywords",
+               "Description contains any of these (e.g. Zeitarbeit, PHP)."),
+            _f("EXCLUDE_SOURCES", "exclude_sources", "text", "Exclude sources",
+               "Job board name contains any of these (e.g. Glassdoor)."),
+        ],
+    },
+    {
         "name": "AI usage & cost",
         "desc": "Control how many OpenAI tokens are spent. Lower = cheaper.",
         "fields": [

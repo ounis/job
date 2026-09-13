@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     search_keywords: str = ""
     max_results: int = 50
 
+    # Exclusions — comma-separated, case-insensitive substring matches. A job is
+    # dropped during a scan if it matches ANY of these.
+    exclude_companies: str = ""     # employer name contains any of these
+    exclude_locations: str = ""     # location (city/region) contains any of these
+    exclude_title_keywords: str = ""    # job title contains any of these
+    exclude_description_keywords: str = ""  # description contains any of these
+    exclude_sources: str = ""       # job board (LinkedIn, Indeed, ...) matches any
+
     # App
     # CV_PATH may be a directory (scan it for CVs and auto-pick / let the UI
     # choose) or a specific file (explicit override). Default: the data/ dir.
@@ -124,6 +132,30 @@ class Settings(BaseSettings):
         if not parts:
             return ["Germany"]
         return parts
+
+    @staticmethod
+    def _csv_lower(value: str) -> list[str]:
+        return [p.strip().lower() for p in (value or "").split(",") if p.strip()]
+
+    @property
+    def exclude_companies_list(self) -> list[str]:
+        return self._csv_lower(self.exclude_companies)
+
+    @property
+    def exclude_locations_list(self) -> list[str]:
+        return self._csv_lower(self.exclude_locations)
+
+    @property
+    def exclude_title_keywords_list(self) -> list[str]:
+        return self._csv_lower(self.exclude_title_keywords)
+
+    @property
+    def exclude_description_keywords_list(self) -> list[str]:
+        return self._csv_lower(self.exclude_description_keywords)
+
+    @property
+    def exclude_sources_list(self) -> list[str]:
+        return self._csv_lower(self.exclude_sources)
 
     @property
     def cv_full_path(self) -> Path:
