@@ -83,11 +83,49 @@ table.jobs th { font-size: 12px; text-transform: uppercase; color: var(--muted);
 .badge-info { background: #e7eefb; color: var(--primary); }
 .badge-applied { background: #e2f3e8; color: var(--green); }
 .badge-prepared { background: #fff3d6; color: #8a6d1a; }
+.badge-interviewing { background: #e7eefb; color: var(--primary); }
+.badge-accepted { background: #d6f5df; color: #17663a; }
+.badge-rejected { background: #f6dede; color: var(--red); }
+.badge-no_response { background: #eceff3; color: #6b7280; }
+.badge-withdrawn { background: #efe6f7; color: #6b3fa0; }
 .badge-ai { background: #e7eefb; color: var(--primary); }
 .badge-noai { background: #f1e2e2; color: var(--red); }
 .badge-ignored { background: #f1e2e2; color: var(--red); }
 .badge-new { background: #eef0f3; color: var(--muted); }
+.badge-event { background: #eaf0fb; color: var(--primary); }
 .row-prepared { background: #fffdf5; }
+
+/* Events + notes on job detail */
+.inline-form, .event-form, .note-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.event-form input, .event-form select, .inline-form select {
+  padding: 6px 8px; border: 1px solid #d5dae1; border-radius: 6px; font-size: 13px;
+}
+.note-form { flex-direction: column; align-items: stretch; max-width: 640px; }
+.note-form textarea {
+  padding: 8px 10px; border: 1px solid #d5dae1; border-radius: 6px;
+  font-size: 14px; resize: vertical; font-family: inherit;
+}
+.event-list, .note-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.event-item, .note-item {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.event-item.past { opacity: .7; }
+.event-when { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text); }
+.event-title { font-weight: 500; }
+.note-item { display: block; }
+.note-body { white-space: pre-wrap; margin: 2px 0 4px; }
+
+/* Calendar filters */
+.cal-filters {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: #fcfcfd; margin-bottom: 14px;
+}
+.filter-group { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.filter-label { font-weight: 600; font-size: 13px; min-width: 90px; }
+.filter-actions { display: flex; gap: 8px; }
+.cal-table .event-when { white-space: nowrap; }
 
 .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
 .desc { white-space: normal; line-height: 1.6; }

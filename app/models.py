@@ -23,7 +23,77 @@ class JobStatus(str, Enum):
     NEW = "new"
     PREPARED = "prepared"
     APPLIED = "applied"
+    INTERVIEWING = "interviewing"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    NO_RESPONSE = "no_response"
+    WITHDRAWN = "withdrawn"
     IGNORED = "ignored"
+
+
+# Statuses that represent an active/tracked application (kept out of fresh
+# matching and shown with their own badge). Everything except plain "new".
+STICKY_STATUSES = {
+    JobStatus.PREPARED, JobStatus.APPLIED, JobStatus.INTERVIEWING,
+    JobStatus.ACCEPTED, JobStatus.REJECTED, JobStatus.NO_RESPONSE,
+    JobStatus.WITHDRAWN, JobStatus.IGNORED,
+}
+
+# Human-friendly labels for the UI.
+STATUS_LABELS = {
+    JobStatus.NEW: "New",
+    JobStatus.PREPARED: "Prepared",
+    JobStatus.APPLIED: "Applied",
+    JobStatus.INTERVIEWING: "Interviewing",
+    JobStatus.ACCEPTED: "Accepted",
+    JobStatus.REJECTED: "Rejected",
+    JobStatus.NO_RESPONSE: "No response",
+    JobStatus.WITHDRAWN: "Withdrawn",
+    JobStatus.IGNORED: "Ignored",
+}
+
+
+class EventType(str, Enum):
+    PHONE_CALL = "phone_call"
+    VIDEO_CALL = "video_call"
+    ONSITE_INTERVIEW = "onsite_interview"
+    TECHNICAL_INTERVIEW = "technical_interview"
+    DEADLINE = "deadline"
+    FOLLOW_UP = "follow_up"
+    OTHER = "other"
+
+
+EVENT_TYPE_LABELS = {
+    EventType.PHONE_CALL: "Phone call",
+    EventType.VIDEO_CALL: "Video call",
+    EventType.ONSITE_INTERVIEW: "In-person interview",
+    EventType.TECHNICAL_INTERVIEW: "Technical interview",
+    EventType.DEADLINE: "Deadline",
+    EventType.FOLLOW_UP: "Follow-up",
+    EventType.OTHER: "Other",
+}
+
+
+class JobEvent(BaseModel):
+    """A scheduled or past calendar event tied to a job (call, interview...)."""
+
+    id: Optional[int] = None
+    job_key: str
+    event_type: EventType = EventType.OTHER
+    starts_at: str  # ISO datetime (local, from a datetime-local input)
+    title: str = ""
+    location: str = ""
+    notes: str = ""
+    created_at: Optional[str] = None
+
+
+class JobNote(BaseModel):
+    """A timestamped free-text note attached to a job."""
+
+    id: Optional[int] = None
+    job_key: str
+    body: str
+    created_at: Optional[str] = None
 
 
 class Seniority(str, Enum):

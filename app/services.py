@@ -14,7 +14,9 @@ from .ai import operations as ai_ops
 from .ai.cv_reader import extract_text, hash_file
 from .config import get_settings
 from .logging_setup import get_logger
-from .models import CVProfile, JobStatus, ScoredJob
+from datetime import datetime, timezone
+
+from .models import CVProfile, EventType, JobEvent, JobStatus, ScoredJob
 from .pdf.render import render_cv_pdf, render_letter_pdf
 from .providers import get_providers
 
@@ -265,3 +267,62 @@ def ignore_job(key: str) -> None:
 
 def unignore_job(key: str) -> None:
     db.set_status(key, JobStatus.NEW)
+
+
+# ----------------------------------------------------------------------------
+# Status / outcome, events, notes
+# ----------------------------------------------------------------------------
+def set_job_status(key: str, status: JobStatus) -> None:
+    """Change a job's status (e.g. interviewing/accepted/rejected/no_response).
+
+    If moving to 'applied' and no application date is recorded yet, stamp one.
+    """
+    if status == JobStatus.APPLIED and (db.get_job(key) and not db.get_job(key).applied_at):
+        db.mark_applied(key)
+        return
+    db.set_status(key, status)
+    log.info("Set status of %s -> %s", key, status.value)
+
+
+def add_event(
+    key: str, event_type: str, starts_at: str,
+    title: str = "", location: str = "", notes: str = "",
+) -> int:
+    et = EventType(event_type) if event_type in EventType._value2member_map_ else EventType.OTHER
+    eid = db.add_event(JobEvent(
+        job_key=key, event_type=et, starts_at=starts_at,
+        title=title, location=location, notes=notes,
+    ))
+    log.info("Added %s event to %s at %s", et.value, key, starts_at)
+    return eid
+
+
+def delete_event(event_id: int) -> None:
+    db.delete_event(event_id)
+
+
+def add_note(key: str, body: str) -> int:
+    return db.add_note(key, body.strip())
+
+
+def delete_note(note_id: int) -> None:
+    db.delete_note(note_id)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def split_events(events: list[JobEvent]) -> dict:
+    """Split events into upcoming and past by comparing starts_at to now.
+
+    Events come sorted ascending. Compare on the first 19 chars
+    (YYYY-MM-DDTHH:MM:SS) so a naive local datetime-local value and the ISO
+    'now' line up lexically. Past is returned most-recent-first.
+    """
+    now19 = datetime.now().isoformat()[:19]
+    upcoming, past = [], []
+    for e in events:
+        (upcoming if (e.starts_at or "")[:19] >= now19 else past).append(e)
+    past.reverse()
+    return {"upcoming": upcoming, "past": past}

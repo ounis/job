@@ -18,6 +18,9 @@ from typing import Iterator, Optional
 from .config import get_settings
 from .models import (
     CVProfile,
+    EventType,
+    JobEvent,
+    JobNote,
     JobPosting,
     JobStatus,
     RelevanceResult,
@@ -60,6 +63,29 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_relevance ON jobs(relevance DESC);
+
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key     TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    starts_at   TEXT NOT NULL,
+    title       TEXT,
+    location    TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (job_key) REFERENCES jobs(key) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_events_job ON events(job_key);
+CREATE INDEX IF NOT EXISTS idx_events_when ON events(starts_at);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (job_key) REFERENCES jobs(key) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_notes_job ON notes(job_key);
 """
 
 
@@ -72,6 +98,7 @@ def connect() -> Iterator[sqlite3.Connection]:
     settings = get_settings()
     conn = sqlite3.connect(settings.db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")  # enforce ON DELETE CASCADE
     try:
         yield conn
         conn.commit()
@@ -357,3 +384,113 @@ def counts_by_status() -> dict[str, int]:
             "SELECT status, COUNT(*) AS c FROM jobs GROUP BY status"
         ).fetchall()
     return {r["status"]: r["c"] for r in rows}
+
+
+# ----------------------------------------------------------------------------
+# Events (calls / interviews / deadlines attached to a job)
+# ----------------------------------------------------------------------------
+def _row_to_event(row: sqlite3.Row) -> JobEvent:
+    return JobEvent(
+        id=row["id"],
+        job_key=row["job_key"],
+        event_type=EventType(row["event_type"]),
+        starts_at=row["starts_at"],
+        title=row["title"] or "",
+        location=row["location"] or "",
+        notes=row["notes"] or "",
+        created_at=row["created_at"],
+    )
+
+
+def add_event(event: JobEvent) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO events (job_key, event_type, starts_at, title, location, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.job_key, event.event_type.value, event.starts_at,
+                event.title, event.location, event.notes, _now(),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def delete_event(event_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+
+
+def list_events_for_job(key: str) -> list[JobEvent]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE job_key = ? ORDER BY starts_at ASC", (key,)
+        ).fetchall()
+    return [_row_to_event(r) for r in rows]
+
+
+def list_all_events(
+    statuses: Optional[list[JobStatus]] = None,
+    event_types: Optional[list[EventType]] = None,
+) -> list[dict]:
+    """All events joined with their job's title/company/status, sorted by time.
+
+    Optional filters on the job's status and the event type. Returns dicts so
+    the calendar can show job context without an extra lookup.
+    """
+    query = (
+        "SELECT e.*, j.title AS job_title, j.company AS job_company, "
+        "j.status AS job_status FROM events e "
+        "JOIN jobs j ON j.key = e.job_key WHERE 1=1"
+    )
+    params: list = []
+    if statuses:
+        query += " AND j.status IN (%s)" % ",".join("?" for _ in statuses)
+        params += [s.value for s in statuses]
+    if event_types:
+        query += " AND e.event_type IN (%s)" % ",".join("?" for _ in event_types)
+        params += [t.value for t in event_types]
+    query += " ORDER BY e.starts_at ASC"
+    with connect() as conn:
+        rows = conn.execute(query, params).fetchall()
+    out = []
+    for r in rows:
+        ev = _row_to_event(r)
+        out.append({
+            "event": ev,
+            "job_key": r["job_key"],
+            "job_title": r["job_title"],
+            "job_company": r["job_company"] or "",
+            "job_status": r["job_status"],
+        })
+    return out
+
+
+# ----------------------------------------------------------------------------
+# Notes (personal impressions / key points per job)
+# ----------------------------------------------------------------------------
+def add_note(key: str, body: str) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO notes (job_key, body, created_at) VALUES (?, ?, ?)",
+            (key, body, _now()),
+        )
+        return int(cur.lastrowid)
+
+
+def delete_note(note_id: int) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+
+
+def list_notes_for_job(key: str) -> list[JobNote]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM notes WHERE job_key = ? ORDER BY created_at DESC", (key,)
+        ).fetchall()
+    return [
+        JobNote(id=r["id"], job_key=r["job_key"], body=r["body"],
+                created_at=r["created_at"])
+        for r in rows
+    ]

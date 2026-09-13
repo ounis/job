@@ -13,6 +13,7 @@ Routes:
 """
 from __future__ import annotations
 
+import datetime as _dt
 import urllib.parse
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -33,7 +34,12 @@ from .config import (
     set_env_values,
 )
 from .logging_setup import attach_uvicorn_loggers, configure_logging, get_logger
-from .models import JobStatus
+from .models import (
+    EVENT_TYPE_LABELS,
+    STATUS_LABELS,
+    EventType,
+    JobStatus,
+)
 
 configure_logging()
 log = get_logger("app.main")
@@ -375,6 +381,84 @@ def clear_results():
     )
 
 
+@app.post("/jobs/{key:path}/status")
+def set_status_route(key: str, request: Request, status: str = Form(...)):
+    try:
+        st = JobStatus(status)
+    except ValueError:
+        return _redirect_back(request, "Unknown status.")
+    services.set_job_status(key, st)
+    return _redirect_back(request, f"Status set to {STATUS_LABELS.get(st, status)}.")
+
+
+@app.post("/jobs/{key:path}/events/add")
+def add_event_route(
+    key: str, request: Request,
+    event_type: str = Form(...), starts_at: str = Form(...),
+    title: str = Form(""), location: str = Form(""), notes: str = Form(""),
+):
+    if not starts_at.strip():
+        return _redirect_back(request, "Event needs a date/time.")
+    services.add_event(key, event_type, starts_at.strip(), title.strip(),
+                       location.strip(), notes.strip())
+    return _redirect_back(request, "Event added.")
+
+
+@app.post("/jobs/{key:path}/events/{event_id}/delete")
+def delete_event_route(key: str, event_id: int, request: Request):
+    services.delete_event(event_id)
+    return _redirect_back(request, "Event removed.")
+
+
+@app.post("/jobs/{key:path}/notes/add")
+def add_note_route(key: str, request: Request, body: str = Form(...)):
+    if not body.strip():
+        return _redirect_back(request, "Note is empty.")
+    services.add_note(key, body)
+    return _redirect_back(request, "Note added.")
+
+
+@app.post("/jobs/{key:path}/notes/{note_id}/delete")
+def delete_note_route(key: str, note_id: int, request: Request):
+    services.delete_note(note_id)
+    return _redirect_back(request, "Note removed.")
+
+
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request):
+    # Filters via query params: status (repeatable), type (repeatable), when.
+    qp = request.query_params
+    sel_statuses = [JobStatus(s) for s in qp.getlist("status") if s in JobStatus._value2member_map_]
+    sel_types = [EventType(t) for t in qp.getlist("type") if t in EventType._value2member_map_]
+    when = qp.get("when", "all")  # all | upcoming | past
+
+    rows = db.list_all_events(
+        statuses=sel_statuses or None,
+        event_types=sel_types or None,
+    )
+    now19 = _dt.datetime.now().isoformat()[:19]
+    if when == "upcoming":
+        rows = [r for r in rows if (r["event"].starts_at or "")[:19] >= now19]
+    elif when == "past":
+        rows = [r for r in rows if (r["event"].starts_at or "")[:19] < now19]
+        rows.reverse()
+
+    return templates.TemplateResponse(
+        request, "calendar.html",
+        {
+            "rows": rows,
+            "statuses": list(JobStatus),
+            "status_labels": STATUS_LABELS,
+            "event_types": list(EventType),
+            "event_type_labels": EVENT_TYPE_LABELS,
+            "sel_statuses": [s.value for s in sel_statuses],
+            "sel_types": [t.value for t in sel_types],
+            "when": when,
+            "flash": qp.get("msg"),
+        },
+    )
+
+
 @app.post("/jobs/{key:path}/ignore")
 def ignore(key: str, request: Request):
     services.ignore_job(key)
@@ -393,10 +477,21 @@ def job_detail(request: Request, key: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     application = db.get_application(key)
+    events = services.split_events(db.list_events_for_job(key))
+    notes = db.list_notes_for_job(key)
     return templates.TemplateResponse(
         request,
         "job_detail.html",
-        {"job": job, "application": application},
+        {
+            "job": job,
+            "application": application,
+            "events": events,
+            "notes": notes,
+            "statuses": list(JobStatus),
+            "status_labels": STATUS_LABELS,
+            "event_types": list(EventType),
+            "event_type_labels": EVENT_TYPE_LABELS,
+        },
     )
 
 

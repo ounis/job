@@ -112,6 +112,99 @@
 {% endif %}
 
 <section class="panel">
+  <h2>Status &amp; outcome</h2>
+  <form method="post" action="/jobs/{{ job.posting.key }}/status" class="inline-form">
+    <select name="status">
+      {% for st in statuses %}
+      <option value="{{ st.value }}" {{ 'selected' if st.value == job.status.value else '' }}>
+        {{ status_labels[st] }}
+      </option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-primary small">Update status</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Calendar &amp; events</h2>
+
+  <form method="post" action="/jobs/{{ job.posting.key }}/events/add" class="event-form">
+    <select name="event_type">
+      {% for et in event_types %}
+      <option value="{{ et.value }}">{{ event_type_labels[et] }}</option>
+      {% endfor %}
+    </select>
+    <input type="datetime-local" name="starts_at" required />
+    <input type="text" name="title" placeholder="Title (optional)" />
+    <input type="text" name="location" placeholder="Location / link (optional)" />
+    <button class="btn btn-primary small">Add event</button>
+  </form>
+
+  {% if events.upcoming %}
+  <h3 class="small">Upcoming</h3>
+  <ul class="event-list">
+    {% for e in events.upcoming %}
+    <li class="event-item upcoming">
+      <span class="event-when">{{ e.starts_at[:16]|replace('T', ' ') }}</span>
+      <span class="badge badge-event">{{ event_type_labels[e.event_type] }}</span>
+      <span class="event-title">{{ e.title or '' }}</span>
+      {% if e.location %}<span class="muted small">· {{ e.location }}</span>{% endif %}
+      {% if e.notes %}<div class="muted small">{{ e.notes }}</div>{% endif %}
+      <form method="post" action="/jobs/{{ job.posting.key }}/events/{{ e.id }}/delete" style="display:inline">
+        <button class="btn btn-ghost small">remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if events.past %}
+  <h3 class="small">Past</h3>
+  <ul class="event-list">
+    {% for e in events.past %}
+    <li class="event-item past">
+      <span class="event-when">{{ e.starts_at[:16]|replace('T', ' ') }}</span>
+      <span class="badge badge-event">{{ event_type_labels[e.event_type] }}</span>
+      <span class="event-title">{{ e.title or '' }}</span>
+      {% if e.location %}<span class="muted small">· {{ e.location }}</span>{% endif %}
+      {% if e.notes %}<div class="muted small">{{ e.notes }}</div>{% endif %}
+      <form method="post" action="/jobs/{{ job.posting.key }}/events/{{ e.id }}/delete" style="display:inline">
+        <button class="btn btn-ghost small">remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if not events.upcoming and not events.past %}
+  <p class="muted small">No events yet. Schedule a call or interview above.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Notes</h2>
+  <form method="post" action="/jobs/{{ job.posting.key }}/notes/add" class="note-form">
+    <textarea name="body" rows="3" placeholder="Impressions, key points, things to remember..."></textarea>
+    <button class="btn btn-primary small">Add note</button>
+  </form>
+  {% if notes %}
+  <ul class="note-list">
+    {% for n in notes %}
+    <li class="note-item">
+      <div class="muted small">{{ n.created_at[:16]|replace('T', ' ') }}</div>
+      <div class="note-body">{{ n.body }}</div>
+      <form method="post" action="/jobs/{{ job.posting.key }}/notes/{{ n.id }}/delete" style="display:inline">
+        <button class="btn btn-ghost small">remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted small">No notes yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h2>Description</h2>
   <div class="desc">{{ job.posting.description }}</div>
 </section>

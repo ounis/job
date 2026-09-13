@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Calendar — Job Hunter{% endblock %}
+{% block content %}
+
+<a href="/" class="muted">&larr; Dashboard</a>
+
+<section class="panel">
+  <div class="panel-head">
+    <h1>Calendar <span class="muted">({{ rows|length }} event{{ '' if rows|length == 1 else 's' }})</span></h1>
+  </div>
+
+  <form method="get" action="/calendar" class="cal-filters">
+    <div class="filter-group">
+      <span class="filter-label">When</span>
+      <label class="check-inline"><input type="radio" name="when" value="all" {{ 'checked' if when == 'all' else '' }} /> All</label>
+      <label class="check-inline"><input type="radio" name="when" value="upcoming" {{ 'checked' if when == 'upcoming' else '' }} /> Upcoming</label>
+      <label class="check-inline"><input type="radio" name="when" value="past" {{ 'checked' if when == 'past' else '' }} /> Past</label>
+    </div>
+
+    <div class="filter-group">
+      <span class="filter-label">Job status</span>
+      {% for st in statuses %}
+      <label class="check-inline">
+        <input type="checkbox" name="status" value="{{ st.value }}" {{ 'checked' if st.value in sel_statuses else '' }} />
+        {{ status_labels[st] }}
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="filter-group">
+      <span class="filter-label">Event type</span>
+      {% for et in event_types %}
+      <label class="check-inline">
+        <input type="checkbox" name="type" value="{{ et.value }}" {{ 'checked' if et.value in sel_types else '' }} />
+        {{ event_type_labels[et] }}
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary small">Apply filters</button>
+      <a href="/calendar" class="btn btn-ghost small">Reset</a>
+    </div>
+  </form>
+
+  {% if rows %}
+  <table class="jobs cal-table">
+    <thead>
+      <tr><th>When</th><th>Type</th><th>Job</th><th>Company</th><th>Status</th><th>Details</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="event-when">{{ r.event.starts_at[:16]|replace('T', ' ') }}</td>
+        <td><span class="badge badge-event">{{ event_type_labels[r.event.event_type] }}</span></td>
+        <td><a href="/jobs/{{ r.job_key }}">{{ r.job_title }}</a></td>
+        <td>{{ r.job_company }}</td>
+        <td><span class="badge badge-{{ r.job_status }}">{{ r.job_status }}</span></td>
+        <td class="muted small">
+          {{ r.event.title or '' }}
+          {% if r.event.location %} · {{ r.event.location }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No events match. Add events from a job's page, or adjust filters.</p>
+  {% endif %}
+</section>
+
+{% endblock %}
