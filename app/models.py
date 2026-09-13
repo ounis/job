@@ -19,6 +19,53 @@ def _strip_surrogates(text: str) -> str:
     return text.encode("utf-8", "ignore").decode("utf-8", "ignore")
 
 
+# Known job-board domains -> friendly names. Matched as a substring of the host
+# so subdomains/country TLDs (de.indeed.com, linkedin.com/jobs) all resolve.
+_BOARD_DOMAINS = {
+    "linkedin.": "LinkedIn",
+    "indeed.": "Indeed",
+    "glassdoor.": "Glassdoor",
+    "stepstone.": "StepStone",
+    "xing.": "XING",
+    "monster.": "Monster",
+    "ziprecruiter.": "ZipRecruiter",
+    "adzuna.": "Adzuna",
+    "arbeitsagentur.": "Bundesagentur",
+    "google.": "Google",
+    "welcometothejungle.": "Welcome to the Jungle",
+    "join.com": "Join",
+    "kimeta.": "Kimeta",
+    "stellenanzeigen.": "Stellenanzeigen",
+    "jobs.": "Jobs",
+    "greenhouse.io": "Greenhouse",
+    "lever.co": "Lever",
+    "workday": "Workday",
+    "smartrecruiters.": "SmartRecruiters",
+    "personio.": "Personio",
+}
+
+
+def board_from_url(url: str) -> str:
+    """Return a friendly job-board name for the domain a URL points to.
+
+    Answers 'which site will Open posting take me to?' — LinkedIn, Indeed,
+    StepStone, etc. Falls back to the bare domain, or '' when there's no URL.
+    """
+    if not url:
+        return ""
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    if not host:
+        return ""
+    for needle, name in _BOARD_DOMAINS.items():
+        if needle in host:
+            return name
+    # Fall back to the registrable-ish domain (strip common leading labels).
+    host = host.removeprefix("www.").removeprefix("de.").removeprefix("jobs.")
+    return host
+
+
 class JobStatus(str, Enum):
     NEW = "new"
     PREPARED = "prepared"
@@ -133,6 +180,11 @@ class JobPosting(BaseModel):
     def key(self) -> str:
         """Stable unique key for dedupe + DB identity."""
         return f"{self.provider}:{self.external_id}"
+
+    @property
+    def source(self) -> str:
+        """The job board the Open-posting link leads to (from the URL domain)."""
+        return board_from_url(self.url)
 
 
 class CVProfile(BaseModel):

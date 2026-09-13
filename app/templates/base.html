@@ -12,9 +12,13 @@
     <a href="/" class="brand">🎯 Job Hunter</a>
     <nav>
       <a href="/calendar" class="muted">Calendar</a>
+      <a href="/logs" class="muted">Logs</a>
       <a href="/ignored" class="muted">Ignored</a>
       <a href="/settings" class="muted">Settings</a>
-      <span class="muted">· Germany-wide job matching</span>
+      {% set loc = (search_location() if search_location is defined else 'Germany') %}
+      <span class="muted">·
+        {% if not loc or loc|lower in ('germany', 'deutschland') %}Germany-wide{% else %}{{ loc }}{% endif %}
+        job matching</span>
     </nav>
   </header>
 

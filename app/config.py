@@ -114,6 +114,18 @@ class Settings(BaseSettings):
         return [k.strip() for k in self.search_keywords.split(",") if k.strip()]
 
     @property
+    def location_list(self) -> list[str]:
+        """Search locations, comma-separated (e.g. 'remote, online, Berlin').
+
+        Empty or a lone 'Germany'/'Deutschland' means country-wide, represented
+        as a single 'Germany' entry so providers keep their existing behavior.
+        """
+        parts = [p.strip() for p in (self.search_location or "").split(",") if p.strip()]
+        if not parts:
+            return ["Germany"]
+        return parts
+
+    @property
     def cv_full_path(self) -> Path:
         """Resolve the active CV.
 

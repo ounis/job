@@ -40,13 +40,15 @@
     <div class="filter-actions">
       <button type="submit" class="btn btn-primary small">Apply filters</button>
       <a href="/calendar" class="btn btn-ghost small">Reset</a>
+      <a href="/calendar.ics{{ ('?' ~ request.url.query) if request.url.query else '' }}"
+         class="btn btn-outline small">Export .ics</a>
     </div>
   </form>
 
   {% if rows %}
   <table class="jobs cal-table">
     <thead>
-      <tr><th>When</th><th>Type</th><th>Job</th><th>Company</th><th>Status</th><th>Details</th></tr>
+      <tr><th>When</th><th>Type</th><th>Job</th><th>Company</th><th>Source</th><th>Status</th><th>Details</th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
@@ -55,6 +57,7 @@
         <td><span class="badge badge-event">{{ event_type_labels[r.event.event_type] }}</span></td>
         <td><a href="/jobs/{{ r.job_key }}">{{ r.job_title }}</a></td>
         <td>{{ r.job_company }}</td>
+        <td class="small">{{ r.job_source }}</td>
         <td><span class="badge badge-{{ r.job_status }}">{{ r.job_status }}</span></td>
         <td class="muted small">
           {{ r.event.title or '' }}

@@ -25,6 +25,7 @@ from .models import (
     JobStatus,
     RelevanceResult,
     ScoredJob,
+    board_from_url,
 )
 
 SCHEMA = """
@@ -369,6 +370,20 @@ def get_application(key: str) -> Optional[dict]:
     }
 
 
+def delete_job(key: str) -> bool:
+    """Permanently remove a job and its events/notes. Returns True if it existed.
+
+    Unlike ignore (which keeps the row so it stays out of matches), this fully
+    forgets the job — it can resurface in a future scan as a fresh 'new' entry.
+    """
+    with connect() as conn:
+        # Explicit deletes in case foreign_keys pragma isn't honored everywhere.
+        conn.execute("DELETE FROM events WHERE job_key = ?", (key,))
+        conn.execute("DELETE FROM notes WHERE job_key = ?", (key,))
+        cur = conn.execute("DELETE FROM jobs WHERE key = ?", (key,))
+        return cur.rowcount > 0
+
+
 def clear_new_jobs() -> int:
     """Delete all jobs in status 'new'. Applied/ignored jobs are kept so they
     stay sticky. Returns the number of rows removed. Used to reset matches
@@ -441,7 +456,7 @@ def list_all_events(
     """
     query = (
         "SELECT e.*, j.title AS job_title, j.company AS job_company, "
-        "j.status AS job_status FROM events e "
+        "j.status AS job_status, j.url AS job_url FROM events e "
         "JOIN jobs j ON j.key = e.job_key WHERE 1=1"
     )
     params: list = []
@@ -463,6 +478,7 @@ def list_all_events(
             "job_title": r["job_title"],
             "job_company": r["job_company"] or "",
             "job_status": r["job_status"],
+            "job_source": board_from_url(r["job_url"] or ""),
         })
     return out
 

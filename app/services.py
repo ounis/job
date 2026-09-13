@@ -66,10 +66,11 @@ async def run_scan(force_profile: bool = False) -> dict:
     log.info("=== Scan started (force_profile=%s) ===", force_profile)
     profile = ensure_profile(force=force_profile)
     keywords = ai_ops.derive_keywords(profile)
+    locations = settings.location_list
     log.info("Search keywords: %s", ", ".join(keywords) or "(none)")
     log.info(
-        "Search config: location=%r distance=%dkm max_results=%d min_relevance=%d",
-        settings.search_location, settings.search_distance_km,
+        "Search config: locations=%s distance=%dkm max_results=%d min_relevance=%d",
+        locations, settings.search_distance_km,
         settings.max_results, settings.min_relevance,
     )
 
@@ -91,19 +92,28 @@ async def run_scan(force_profile: bool = False) -> dict:
         if not provider.is_configured():
             log.info("Skipping provider %r (not configured)", provider.name)
             continue
-        log.info("Querying provider %r ...", provider.name)
-        try:
-            postings = await provider.search(
-                keywords=keywords,
-                location=settings.search_location,
-                distance_km=settings.search_distance_km,
-                limit=settings.max_results,
-                profile=profile,
-            )
-        except Exception:
-            log.exception("Provider %r failed", provider.name)
-            continue
-        log.info("Provider %r returned %d postings", provider.name, len(postings))
+        # Query the provider once per configured location, then merge + de-dupe
+        # by job key so the same posting from two locations isn't double-counted.
+        merged: dict[str, object] = {}
+        for loc in locations:
+            log.info("Querying provider %r for location %r ...", provider.name, loc)
+            try:
+                loc_postings = await provider.search(
+                    keywords=keywords,
+                    location=loc,
+                    distance_km=settings.search_distance_km,
+                    limit=settings.max_results,
+                    profile=profile,
+                )
+            except Exception:
+                log.exception("Provider %r failed for location %r", provider.name, loc)
+                continue
+            log.info("Provider %r @ %r returned %d postings", provider.name, loc, len(loc_postings))
+            for p in loc_postings:
+                merged.setdefault(p.key, p)
+        postings = list(merged.values())
+        log.info("Provider %r merged %d unique postings across %d location(s)",
+                 provider.name, len(postings), len(locations))
         fetched += len(postings)
 
         # Collect the new (unseen) postings for this provider first.
@@ -259,6 +269,13 @@ def unmark_job_applied(key: str) -> None:
     """Move an applied job back to 'prepared' (clears the application date)."""
     db.unmark_applied(key)
     log.info("Reverted %s from applied back to prepared", key)
+
+
+def forget_job(key: str) -> bool:
+    """Permanently delete a job and everything attached to it."""
+    removed = db.delete_job(key)
+    log.info("Forgot job %s (existed=%s)", key, removed)
+    return removed
 
 
 def ignore_job(key: str) -> None:

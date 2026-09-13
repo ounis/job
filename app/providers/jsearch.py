@@ -53,13 +53,17 @@ class JSearchProvider(JobProvider):
             return []
 
         # JSearch takes a free-text query. Encode the location into the query
-        # since it has no separate distance param; "Germany" stays country-wide.
+        # since it has no separate distance param.
         loc = location.strip()
+        low = loc.lower()
         terms = " ".join(keywords).strip() or "jobs"
-        if loc and loc.lower() not in ("germany", "deutschland"):
-            query = f"{terms} in {loc}, Germany"
-        else:
+        if not loc or low in ("germany", "deutschland"):
             query = f"{terms} in Germany"
+        elif low in ("remote", "remote work", "homeoffice", "home office", "online"):
+            # Work-arrangement keywords, not a place: search remote roles in DE.
+            query = f"{terms} remote in Germany"
+        else:
+            query = f"{terms} in {loc}, Germany"
 
         num_pages = max(1, (limit + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE)
         # Clamp to the plan's page limit (free tier = 1) to avoid errors/quota

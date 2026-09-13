@@ -9,7 +9,8 @@
     <div>
       <h1>{{ job.posting.title }}</h1>
       <p class="muted">
-        {{ job.posting.company }} · {{ job.posting.location }} ·
+        {{ job.posting.company }} · {{ job.posting.location }}
+        {% if job.posting.source %} · via {{ job.posting.source }}{% endif %} ·
         <span class="badge badge-{{ job.status.value }}">{{ job.status.value }}</span>
       </p>
     </div>
@@ -74,6 +75,10 @@
     {% if job.status.value == 'applied' and job.applied_at %}
     <span class="muted">Applied on {{ job.applied_at[:10] }}</span>
     {% endif %}
+    <form method="post" action="/jobs/{{ job.posting.key }}/forget" style="display:inline"
+          onsubmit="return confirm('Permanently forget this job and all its events/notes? It may reappear in a future scan.');">
+      <button class="btn btn-danger">Forget</button>
+    </form>
   </div>
 </section>
 
@@ -126,7 +131,12 @@
 </section>
 
 <section class="panel">
-  <h2>Calendar &amp; events</h2>
+  <div class="panel-head">
+    <h2>Calendar &amp; events</h2>
+    {% if events.upcoming or events.past %}
+    <a href="/jobs/{{ job.posting.key }}/calendar.ics" class="btn btn-outline small">Export .ics</a>
+    {% endif %}
+  </div>
 
   <form method="post" action="/jobs/{{ job.posting.key }}/events/add" class="event-form">
     <select name="event_type">

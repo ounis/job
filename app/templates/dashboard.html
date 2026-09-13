@@ -88,7 +88,7 @@
       <thead>
         <tr>
           <th></th><th>Score</th><th>Title</th><th>Company</th>
-          <th>Location</th><th>Match</th><th></th>
+          <th>Location</th><th>Source</th><th>Match</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -101,6 +101,7 @@
           </td>
           <td>{{ job.posting.company }}</td>
           <td>{{ job.posting.location }}</td>
+          <td class="small">{{ job.posting.source }}</td>
           <td class="muted small">
             {% if job.relevance.matched_skills %}
               ✓ {{ job.relevance.matched_skills[:4]|join(', ') }}
@@ -147,6 +148,7 @@
         <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
         <td>{{ job.posting.company }}</td>
         <td>{{ job.posting.location }}</td>
+        <td class="small">{{ job.posting.source }}</td>
         <td>
           {% if job.posting.url %}
           <a href="{{ job.posting.url }}" target="_blank" rel="noopener" class="btn btn-ghost small">Open posting</a>
@@ -186,6 +188,7 @@
         <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
         <td>{{ job.posting.company }}</td>
         <td>{{ job.posting.location }}</td>
+        <td class="small">{{ job.posting.source }}</td>
         <td class="muted small">
           {% if job.applied_at %}applied {{ job.applied_at[:10] }}{% endif %}
         </td>

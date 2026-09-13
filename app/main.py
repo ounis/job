@@ -13,15 +13,23 @@ Routes:
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import urllib.parse
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import db, services
+from .ics import build_ics
 from pathlib import Path
 
 from .config import (
@@ -47,7 +55,45 @@ log = get_logger("app.main")
 app = FastAPI(title="Job Hunter")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Expose the current search location to every template (read live so it always
+# reflects the setting, e.g. after changing it on the Settings page).
+templates.env.globals["search_location"] = lambda: get_settings().search_location
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Server-side guard against concurrent/duplicate actions. Because every action
+# is a POST that navigates away and redirects back, a client-side button lock
+# can't reliably stop a second trigger while the first is still running. This
+# middleware serializes mutating POSTs: if one is in flight, a second POST is
+# rejected with a friendly "action in progress" redirect instead of running
+# concurrently. Read-only GETs (dashboard, calendar, logs stream, ...) are
+# never blocked.
+_action_in_progress = False
+
+
+@app.middleware("http")
+async def _serialize_actions(request: Request, call_next):
+    global _action_in_progress
+    if request.method != "POST":
+        return await call_next(request)
+
+    if _action_in_progress:
+        # Another action is running — reject this one rather than run in parallel.
+        ref = request.headers.get("referer", "")
+        target = "/"
+        from urllib.parse import urlsplit as _urlsplit
+        if ref:
+            p = _urlsplit(ref).path
+            if p.startswith("/") and not p.startswith("//"):
+                target = p
+        sep = "&" if "?" in target else "?"
+        msg = urllib.parse.quote("An action is already in progress — please wait.")
+        return RedirectResponse(url=f"{target}{sep}msg={msg}", status_code=303)
+
+    _action_in_progress = True
+    try:
+        return await call_next(request)
+    finally:
+        _action_in_progress = False
 
 
 @app.on_event("startup")
@@ -99,8 +145,9 @@ def dashboard(request: Request):
 
 @app.post("/scan")
 async def scan(force_profile: bool = Form(False), cv: str = Form("")):
+    # Concurrency is handled globally by the _serialize_actions middleware.
     # If a CV was chosen in the scan form, switch to it before scanning. A
-    # switch always forces a re-parse so the new CV's profile is actually used.
+    # switch always forces a re-parse so the new CV's profile is used.
     switched = False
     if cv:
         choice = Path(cv).resolve()
@@ -249,8 +296,10 @@ _SETTINGS_SPEC = [
         "name": "Search",
         "desc": "What and where to search for.",
         "fields": [
-            _f("SEARCH_LOCATION", "search_location", "text", "Location",
-               "'Germany' for country-wide, or a city like 'Berlin'."),
+            _f("SEARCH_LOCATION", "search_location", "text", "Location(s)",
+               "'Germany' for country-wide, or a comma list of cities / "
+               "'remote', e.g. 'remote, Berlin, Munich'. Each is searched and "
+               "results merge + de-duplicate."),
             _f("SEARCH_DISTANCE_KM", "search_distance_km", "int", "Distance",
                "Radius around the location.", min=0, max=500, unit="km"),
             _f("SEARCH_KEYWORDS", "search_keywords", "text", "Keywords",
@@ -457,6 +506,125 @@ def calendar_page(request: Request):
             "flash": qp.get("msg"),
         },
     )
+
+
+def _ics_response(ics: str, filename: str) -> Response:
+    return Response(
+        content=ics,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/calendar.ics")
+def calendar_ics(request: Request):
+    """Export all events (respecting the same filters as /calendar) as .ics."""
+    qp = request.query_params
+    sel_statuses = [JobStatus(s) for s in qp.getlist("status") if s in JobStatus._value2member_map_]
+    sel_types = [EventType(t) for t in qp.getlist("type") if t in EventType._value2member_map_]
+    when = qp.get("when", "all")
+
+    rows = db.list_all_events(statuses=sel_statuses or None, event_types=sel_types or None)
+    now19 = _dt.datetime.now().isoformat()[:19]
+    if when == "upcoming":
+        rows = [r for r in rows if (r["event"].starts_at or "")[:19] >= now19]
+    elif when == "past":
+        rows = [r for r in rows if (r["event"].starts_at or "")[:19] < now19]
+
+    events = [r["event"] for r in rows]
+    titles = {r["job_key"]: r["job_title"] for r in rows}
+    return _ics_response(build_ics(events, titles), "job-hunter-calendar.ics")
+
+
+@app.get("/logs", response_class=HTMLResponse)
+def logs_page(request: Request):
+    return templates.TemplateResponse(request, "logs.html", {})
+
+
+def _log_file():
+    from .config import DATA_DIR
+    return DATA_DIR / "job.log"
+
+
+@app.get("/logs/stream")
+async def logs_stream(request: Request):
+    """Server-Sent Events stream of data/job.log — sends the tail, then follows.
+
+    Emits each log line as an SSE 'data:' event. The browser renders and colors
+    them. Stops when the client disconnects.
+    """
+    path = _log_file()
+
+    async def gen():
+        # Send the last ~200 lines first for immediate context.
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                tail = f.readlines()[-200:]
+            for line in tail:
+                yield f"data: {line.rstrip()}\n\n"
+        except FileNotFoundError:
+            yield "data: (log file not created yet)\n\n"
+            tail = []
+
+        # Follow the file for new lines.
+        pos = None
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(0, 2)  # end
+                pos = f.tell()
+        except FileNotFoundError:
+            pos = 0
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        f.seek(0, 2)
+                        end = f.tell()
+                        if pos is not None and end < pos:
+                            # File was truncated (fresh run) — restart from top.
+                            pos = 0
+                        f.seek(pos or 0)
+                        new = f.read()
+                        pos = f.tell()
+                    if new:
+                        for line in new.splitlines():
+                            yield f"data: {line}\n\n"
+                    else:
+                        yield ": keep-alive\n\n"
+                except FileNotFoundError:
+                    yield ": waiting for log file\n\n"
+                await asyncio.sleep(1.0)
+        except (asyncio.CancelledError, GeneratorExit):
+            # Client navigated away / reconnected — normal SSE teardown, not an
+            # error. Exit quietly so it doesn't surface as an ASGI exception.
+            return
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/jobs/{key:path}/calendar.ics")
+def job_calendar_ics(key: str):
+    job = db.get_job(key)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    events = db.list_events_for_job(key)
+    titles = {key: job.posting.title}
+    safe = key.replace(":", "-").replace("/", "-")
+    return _ics_response(build_ics(events, titles), f"job-{safe}.ics")
+
+
+@app.post("/jobs/{key:path}/forget")
+def forget(key: str, request: Request):
+    services.forget_job(key)
+    # The job no longer exists; if the request came from its detail page, send
+    # to the dashboard instead of a now-404 URL.
+    ref = request.headers.get("referer", "")
+    if key in ref:
+        return _redirect_with_msg("Job forgotten (permanently deleted).")
+    return _redirect_back(request, "Job forgotten (permanently deleted).")
 
 
 @app.post("/jobs/{key:path}/ignore")

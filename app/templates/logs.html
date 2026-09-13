@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Logs — Job Hunter{% endblock %}
+{% block content %}
+
+<a href="/" class="muted">&larr; Dashboard</a>
+
+<section class="panel">
+  <div class="panel-head">
+    <h1>Live logs</h1>
+    <div class="log-controls">
+      <label class="check-inline"><input type="checkbox" id="autoscroll" checked /> auto-scroll</label>
+      <button id="clear-view" class="btn btn-ghost small">Clear view</button>
+      <span id="log-status" class="chip">connecting…</span>
+    </div>
+  </div>
+
+  <div class="log-filters">
+    <span class="filter-label">Show levels:</span>
+    <label class="check-inline"><input type="checkbox" class="lvl-filter" value="error" checked /> Error</label>
+    <label class="check-inline"><input type="checkbox" class="lvl-filter" value="warning" checked /> Warning</label>
+    <label class="check-inline"><input type="checkbox" class="lvl-filter" value="info" /> Info</label>
+    <label class="check-inline"><input type="checkbox" class="lvl-filter" value="debug" /> Debug</label>
+    <label class="check-inline"><input type="checkbox" class="lvl-filter" value="plain" /> Other</label>
+  </div>
+
+  <p class="muted small">
+    Streaming <code>data/job.log</code> in real time. Colors reflect log level.
+    Defaults to errors and warnings — tick more to see the rest. Clearing only
+    affects the on-screen view; the file is untouched.
+  </p>
+  <pre id="log-view" class="log-view"></pre>
+</section>
+
+<script>
+(function () {
+  var view = document.getElementById('log-view');
+  var status = document.getElementById('log-status');
+  var autoscroll = document.getElementById('autoscroll');
+  var filters = document.querySelectorAll('.lvl-filter');
+
+  document.getElementById('clear-view').addEventListener('click', function () {
+    view.textContent = '';
+  });
+
+  // Which levels are currently visible (default: error + warning, from checkboxes).
+  function activeLevels() {
+    var set = {};
+    filters.forEach(function (f) { if (f.checked) set[f.value] = true; });
+    return set;
+  }
+
+  // Map a log line to a filter key. 'critical' counts as error.
+  function levelKey(line) {
+    var m = line.match(/\|\s*(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*\|/);
+    if (m) {
+      var lvl = m[1].toLowerCase();
+      return lvl === 'critical' ? 'error' : lvl;
+    }
+    if (/traceback|error|exception/i.test(line)) return 'error';
+    return 'plain';
+  }
+
+  function applyVisibility(el) {
+    var active = activeLevels();
+    el.style.display = active[el.dataset.level] ? '' : 'none';
+  }
+
+  function applyAll() {
+    var active = activeLevels();
+    view.querySelectorAll('.log-line').forEach(function (el) {
+      el.style.display = active[el.dataset.level] ? '' : 'none';
+    });
+    if (autoscroll.checked) view.scrollTop = view.scrollHeight;
+  }
+
+  filters.forEach(function (f) { f.addEventListener('change', applyAll); });
+
+  function append(line) {
+    var key = levelKey(line);
+    var div = document.createElement('div');
+    div.className = 'log-line lvl-' + key;
+    div.dataset.level = key;
+    div.textContent = line;
+    view.appendChild(div);
+    applyVisibility(div);
+    // Cap DOM size to keep it snappy.
+    while (view.childNodes.length > 2000) view.removeChild(view.firstChild);
+    if (autoscroll.checked && div.style.display !== 'none') {
+      view.scrollTop = view.scrollHeight;
+    }
+  }
+
+  var es = new EventSource('/logs/stream');
+  es.onopen = function () { status.textContent = 'live'; status.className = 'chip chip-on'; };
+  es.onerror = function () { status.textContent = 'reconnecting…'; status.className = 'chip chip-off'; };
+  es.onmessage = function (e) { if (e.data) append(e.data); };
+})();
+</script>
+
+{% endblock %}

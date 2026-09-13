@@ -54,6 +54,8 @@ h2 { font-size: 16px; margin: 0 0 12px; }
 .btn-ghost { border-color: transparent; color: var(--muted); }
 .btn-outline { border-color: #cfd4da; color: var(--text, #333); background: #fff; }
 .btn-outline:hover { border-color: var(--red); color: var(--red); }
+.btn-danger { border-color: var(--red); color: var(--red); background: #fff; }
+.btn-danger:hover { background: var(--red); color: #fff; }
 .btn.small { padding: 3px 9px; font-size: 12.5px; }
 
 .bulk-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; }
@@ -224,3 +226,32 @@ summary { cursor: pointer; font-weight: 600; }
   font-size: 13px; background: #fff; margin-right: 4px;
 }
 .bulk-bar .check-inline select { margin-left: 4px; }
+
+/* Live logs page */
+.log-controls { display: flex; gap: 12px; align-items: center; }
+.log-filters {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: #fcfcfd;
+}
+.log-view {
+  background: #0f1720; color: #d6dee8; border-radius: 8px;
+  padding: 12px 14px; max-height: 70vh; overflow-y: auto;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.log-line { padding: 0 2px; }
+.log-line.lvl-debug   { color: #8a94a6; }
+.log-line.lvl-info    { color: #d6dee8; }
+.log-line.lvl-warning { color: #f0c674; }
+.log-line.lvl-error   { color: #ff6b6b; }
+.log-line.lvl-critical{ color: #fff; background: #7a1f1f; }
+.log-line.lvl-plain   { color: #9aa4b2; }
+
+/* Buttons locked while their form's request is in flight */
+.btn:disabled, button:disabled, input[type=submit]:disabled,
+.btn.is-locked, button.is-locked, input[type=submit].is-locked {
+  opacity: .55; cursor: progress;
+}
+form.is-submitting { cursor: progress; }
+form.is-submitting select, form.is-submitting input { pointer-events: none; }

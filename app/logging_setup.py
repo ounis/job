@@ -56,10 +56,13 @@ def configure_logging() -> None:
 
     # File handler: mirror everything to a rotating logfile in data/.
     log_path = _log_file_path()
-    # Start each run with a fresh logfile: truncate any existing content up front.
-    # (RotatingFileHandler's rotation still applies within the run.)
+    # Logs are kept across runs (appended). The RotatingFileHandler caps total
+    # size, so the file can't grow without bound. Write a separator so it's easy
+    # to spot where a new run begins.
     try:
-        log_path.write_text("", encoding="utf-8")
+        if log_path.exists() and log_path.stat().st_size > 0:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n" + "=" * 70 + "\n")
     except OSError:
         pass
     file_handler = None

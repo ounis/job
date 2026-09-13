@@ -16,7 +16,7 @@
   {% if ignored %}
   <table class="jobs">
     <thead>
-      <tr><th></th><th>Title</th><th>Company</th><th>Location</th><th></th></tr>
+      <tr><th></th><th>Title</th><th>Company</th><th>Location</th><th>Source</th><th></th></tr>
     </thead>
     <tbody>
       {% for job in ignored %}
@@ -25,9 +25,14 @@
         <td><a href="/jobs/{{ job.posting.key }}">{{ job.posting.title }}</a></td>
         <td>{{ job.posting.company }}</td>
         <td>{{ job.posting.location }}</td>
+        <td class="small">{{ job.posting.source }}</td>
         <td>
-          <form method="post" action="/jobs/{{ job.posting.key }}/unignore">
+          <form method="post" action="/jobs/{{ job.posting.key }}/unignore" style="display:inline">
             <button class="btn btn-ghost small">Restore</button>
+          </form>
+          <form method="post" action="/jobs/{{ job.posting.key }}/forget" style="display:inline"
+                onsubmit="return confirm('Permanently forget this job?');">
+            <button class="btn btn-danger small">Forget</button>
           </form>
         </td>
       </tr>
