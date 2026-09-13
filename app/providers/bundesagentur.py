@@ -1,20 +1,25 @@
 """Bundesagentur fuer Arbeit (Jobsuche) provider.
 
 The German Federal Employment Agency exposes a public Jobsuche API — the largest
-single source of vacancies in Germany, free to use. This provider queries it and
-normalizes results into JobPosting.
+single source of vacancies in Germany, free to use. This provider queries the
+current v6 endpoint and normalizes results into JobPosting.
 
 API contract (see https://github.com/bundesAPI/jobsuche-api):
-  Endpoint : GET .../pc/v6/jobs  (falls back to /pc/v4/jobs)
+  Endpoint : GET .../pc/v6/jobs
   Auth     : header "X-API-Key: jobboerse-jobsuche" (public client id).
   Params   : was, wo, umkreis, size, page, angebotsart=1, pav=false.
-  Response : { "stellenangebote": [ {...} ], "maxErgebnisse": N }
-             (v6 items use "referenznummer"; v4 items use "refnr".)
+  Response : { "ergebnisliste": [ {...} ], "maxErgebnisse": N }
+             Each item (verified against the live v6 API):
+               stellenangebotsTitel, firma, referenznummer,
+               stellenlokationen[].adresse{ort,region}, hauptberuf,
+               datumErsteVeroeffentlichung, externeUrl (sometimes).
 
 The client id is configurable (BUNDESAGENTUR_API_KEY) and defaults to the public
 value.
 """
 from __future__ import annotations
+
+import base64
 
 import httpx
 
@@ -26,12 +31,11 @@ from .base import JobProvider
 log = get_logger("app.providers.bundesagentur")
 
 BASE = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
-# Try v6 first (current), fall back to v4 if it 404s.
-API_URLS = [f"{BASE}/pc/v6/jobs", f"{BASE}/pc/v4/jobs"]
-# Public client id published by the agency for the Jobsuche frontend.
+API_URL = f"{BASE}/pc/v6/jobs"
 DEFAULT_API_KEY = "jobboerse-jobsuche"
-DETAIL_URL = "https://www.arbeitsagentur.de/jobsuche/jobdetail/{refnr}"
-# A browser-like UA; some edges reject default httpx/python UAs.
+# Detail page: the site expects the base64-encoded reference number.
+DETAIL_URL = "https://www.arbeitsagentur.de/jobsuche/jobdetail/{code}"
+# A browser-like UA; the agency's edge rejects default python-httpx UAs.
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -78,36 +82,24 @@ class BundesagenturProvider(JobProvider):
             "Accept": "application/json",
         }
 
-        data = None
+        log.info("GET %s was=%r wo=%r umkreis=%s", API_URL, was, wo or "(DE-wide)", distance_km)
         async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-            for url in API_URLS:
-                log.info("GET %s was=%r wo=%r umkreis=%s", url, was, wo or "(DE-wide)", distance_km)
-                try:
-                    resp = await client.get(url, params=params)
-                except httpx.HTTPError as e:
-                    log.warning("Bundesagentur request error on %s: %s", url, e)
-                    continue
-                log.info("Bundesagentur HTTP %s (%s)", resp.status_code, url)
-                if resp.status_code == 404:
-                    # Endpoint version not found — try the next one.
-                    continue
-                if resp.status_code == 403:
-                    # Not necessarily geo — often a temporary WAF/rate block or a
-                    # changed auth requirement. Log the body to aid debugging.
-                    log.warning(
-                        "Bundesagentur 403 on %s. Body: %s", url,
-                        (resp.text or "")[:200].replace("\n", " "),
-                    )
-                    return []
-                resp.raise_for_status()
-                data = resp.json()
-                break
+            try:
+                resp = await client.get(API_URL, params=params)
+            except httpx.HTTPError as e:
+                log.warning("Bundesagentur request error: %s", e)
+                return []
+            log.info("Bundesagentur HTTP %s", resp.status_code)
+            if resp.status_code == 403:
+                log.warning(
+                    "Bundesagentur 403. Body: %s",
+                    (resp.text or "")[:200].replace("\n", " "),
+                )
+                return []
+            resp.raise_for_status()
+            data = resp.json()
 
-        if data is None:
-            log.warning("Bundesagentur: no endpoint responded successfully.")
-            return []
-
-        raw = data.get("stellenangebote", []) or []
+        raw = data.get("ergebnisliste", []) or []
         log.debug("Bundesagentur returned %d raw items (max %s)",
                   len(raw), data.get("maxErgebnisse"))
         postings: list[JobPosting] = []
@@ -119,20 +111,32 @@ class BundesagenturProvider(JobProvider):
         return postings
 
     def _normalize(self, item: dict) -> JobPosting:
-        arbeitsort = item.get("arbeitsort") or {}
-        city = arbeitsort.get("ort") or ""
-        region = arbeitsort.get("region") or ""
+        # Location comes from the first Stellenlokation's address.
+        loks = item.get("stellenlokationen") or []
+        adr = (loks[0].get("adresse") if loks and isinstance(loks[0], dict) else {}) or {}
+        city = adr.get("ort") or ""
+        region = adr.get("region") or ""
         location = ", ".join(p for p in (city, region) if p) or "Deutschland"
-        # v6 uses "referenznummer"; v4 uses "refnr".
-        refnr = item.get("referenznummer") or item.get("refnr") or ""
-        url = item.get("externeUrl") or (DETAIL_URL.format(refnr=refnr) if refnr else "")
+
+        refnr = item.get("referenznummer") or ""
+        # Detail page uses the base64-encoded reference number.
+        if item.get("externeUrl"):
+            url = item["externeUrl"]
+        elif refnr:
+            code = base64.b64encode(refnr.encode("utf-8")).decode("ascii")
+            url = DETAIL_URL.format(code=code)
+        else:
+            url = ""
+
         return JobPosting(
             provider=self.name,
             external_id=str(refnr),
-            title=(item.get("titel") or item.get("beruf") or "").strip(),
-            company=item.get("arbeitgeber") or "",
+            title=(item.get("stellenangebotsTitel") or item.get("hauptberuf") or "").strip(),
+            company=item.get("firma") or "",
             location=location,
-            description=item.get("beruf") or "",
+            # The search response has no full description; the occupation is the
+            # best short summary available without a second detail call.
+            description=item.get("hauptberuf") or "",
             url=url,
-            created=item.get("aktuelleVeroeffentlichungsdatum"),
+            created=item.get("datumErsteVeroeffentlichung"),
         )
