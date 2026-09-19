@@ -16,6 +16,8 @@ Endpoint:
 """
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 
 from ..config import get_settings
@@ -88,11 +90,23 @@ class JSearchProvider(JobProvider):
         }
 
         log.info("GET %s query=%r country=de num_pages=%d", API_URL, query, num_pages)
+        # JSearch can be slow/flaky — retry a couple of times on timeouts.
+        data = None
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(API_URL, headers=headers, params=params)
-            log.info("JSearch HTTP %s", resp.status_code)
-            resp.raise_for_status()
-            data = resp.json()
+            for attempt in range(1, 4):
+                try:
+                    resp = await client.get(API_URL, headers=headers, params=params)
+                    log.info("JSearch HTTP %s (attempt %d)", resp.status_code, attempt)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except (httpx.TimeoutException, httpx.TransportError) as e:
+                    if attempt == 3:
+                        log.warning("JSearch failed after %d attempts: %s", attempt, e)
+                        return []
+                    await asyncio.sleep(1.5 * attempt)
+        if data is None:
+            return []
 
         # /search-v2 nests results under data.jobs (a dict); older /search
         # returned data as a list directly. Handle both.

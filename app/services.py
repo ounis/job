@@ -185,6 +185,17 @@ async def run_scan(force_profile: bool = False) -> dict:
             )
             new_scored += 1
 
+            # Precompute the CV-vs-job gap analysis at scan time so it's ready
+            # on the job page without preparing an application. Scope it to the
+            # relevant AI-scored jobs only: gaps are an extra AI call each and
+            # only matter for jobs worth applying to. Skip when AI is off.
+            if (
+                settings.ai_enabled
+                and posting.key in ai_budget
+                and relevance.score >= settings.min_relevance
+            ):
+                _precompute_gaps(profile, posting)
+
     log.info(
         "=== Scan done: fetched=%d scored_new=%d skipped_seen=%d ===",
         fetched, new_scored, skipped_seen,
@@ -223,6 +234,21 @@ def _ai_score_budget(profile: CVProfile, fresh: list, settings) -> set[str]:
         len(top), len(fresh),
     )
     return {p.key for p in top}
+
+
+def _precompute_gaps(profile: CVProfile, posting) -> None:
+    """Run + cache the CV-vs-job gap analysis for one posting (best-effort).
+
+    Cached in the kv table (JSON) keyed by the job so the job page and prepare
+    both reuse it. Never raises — a slow/failed AI call must not break a scan.
+    """
+    import json as _json
+    try:
+        gaps = ai_ops.analyze_gaps(profile, posting)
+        db.set_kv(f"gaps:{posting.key}", _json.dumps(gaps))
+        log.info("Gap analysis at scan: %d concern(s) for %s", len(gaps), posting.key)
+    except Exception as e:
+        log.warning("Scan-time gap analysis failed for %s: %s", posting.key, e)
 
 
 def prepare_application(key: str, language: str = "de") -> dict:
@@ -276,15 +302,11 @@ def prepare_application(key: str, language: str = "de") -> dict:
     # Store the CV HTML (for the web preview) as the generated_cv field.
     cv_text = cv_html
 
-    # Compute the CV-vs-job gap analysis now (AI is already engaged) so it's
-    # ready on the job page without a separate click. Cached in kv.
-    try:
-        import json as _json
-        gaps = ai_ops.analyze_gaps(profile, posting)
-        db.set_kv(f"gaps:{key}", _json.dumps(gaps))
-        log.info("Gap analysis: %d concern(s) for %s", len(gaps), key)
-    except Exception as e:
-        log.warning("Gap analysis failed for %s: %s", key, e)
+    # Ensure the CV-vs-job gap analysis is available on the job page. Scans
+    # precompute it for relevant jobs, so only run it here if it's missing
+    # (e.g. a low-relevance or heuristic-only job the user prepared anyway).
+    if not db.get_kv(f"gaps:{key}", ""):
+        _precompute_gaps(profile, posting)
 
     payload = {
         "job_key": key,
