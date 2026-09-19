@@ -152,6 +152,8 @@
         <td>
           {% if job.posting.url %}
           <a href="{{ job.posting.url }}" target="_blank" rel="noopener" class="btn btn-ghost small">Open posting</a>
+          {% elif job.posting.search_url %}
+          <a href="{{ job.posting.search_url }}" target="_blank" rel="noopener" class="btn btn-ghost small" title="No direct link — search the web for this role">Find posting</a>
           {% endif %}
           <form method="post" action="/jobs/{{ job.posting.key }}/mark-applied" style="display:inline">
             <button class="btn btn-primary small">Mark as applied</button>

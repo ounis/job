@@ -31,6 +31,10 @@
     {% if job.posting.url %}
     <a href="{{ job.posting.url }}" target="_blank" rel="noopener" class="btn">Open posting</a>
     {% endif %}
+    {% if job.posting.search_url %}
+    <a href="{{ job.posting.search_url }}" target="_blank" rel="noopener" class="btn btn-outline"
+       title="{{ 'No direct link available' if not job.posting.url else 'Use if the direct link is blocked or expired' }}">Find posting</a>
+    {% endif %}
     {% if job.status.value == 'new' %}
     <form method="post" action="/prepare" style="display:inline">
       <input type="hidden" name="keys" value="{{ job.posting.key }}" />

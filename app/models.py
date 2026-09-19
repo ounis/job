@@ -186,6 +186,21 @@ class JobPosting(BaseModel):
         """The job board the Open-posting link leads to (from the URL domain)."""
         return board_from_url(self.url)
 
+    @property
+    def search_url(self) -> str:
+        """An always-reachable web-search URL for this role (title + company).
+
+        Used as a fallback when the direct posting link is missing, expired, or
+        blocked (e.g. StepStone/LinkedIn bot-blocking). Never empty as long as
+        the posting has a title or company.
+        """
+        from urllib.parse import quote_plus
+
+        terms = " ".join(t for t in (self.title, self.company) if t).strip()
+        if not terms:
+            return ""
+        return f"https://www.google.com/search?q={quote_plus(terms + ' Stellenangebot')}"
+
 
 class CVProfile(BaseModel):
     """Structured profile parsed from the user's CV."""

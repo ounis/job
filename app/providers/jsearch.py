@@ -135,8 +135,39 @@ class JSearchProvider(JobProvider):
             company=item.get("employer_name") or "",
             location=location,
             description=item.get("job_description") or "",
-            url=item.get("job_apply_link") or "",
+            url=_best_apply_link(item),
             salary_min=item.get("job_min_salary"),
             salary_max=item.get("job_max_salary"),
             created=item.get("job_posted_at_datetime_utc"),
         )
+
+
+def _best_apply_link(item: dict) -> str:
+    """Pick the most reliable apply URL from a JSearch item.
+
+    JSearch aggregates Google for Jobs, so a single posting can carry several
+    links of varying quality. Aggregator links (StepStone, LinkedIn, ...) often
+    rotate, expire, or block non-browser access, so prefer a direct-employer
+    link when JSearch flags one. Order of preference:
+
+      1. apply_options entry marked is_direct (employer's own site / ATS)
+      2. any apply_options entry with a link
+      3. job_apply_link (the primary link)
+      4. job_google_link (Google for Jobs — always reachable, good fallback)
+
+    Returns "" when nothing usable is present; the render layer then falls back
+    to a title+company web search so the user can still find the role.
+    """
+    options = item.get("apply_options")
+    if isinstance(options, list):
+        direct = [o for o in options if isinstance(o, dict) and o.get("is_direct")]
+        for opt in (*direct, *options):
+            if isinstance(opt, dict):
+                link = (opt.get("apply_link") or "").strip()
+                if link:
+                    return link
+    for field in ("job_apply_link", "job_google_link"):
+        link = (item.get(field) or "").strip()
+        if link:
+            return link
+    return ""
