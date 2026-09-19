@@ -13,6 +13,51 @@ from typing import Any
 from ..config import get_settings
 
 
+def _parse_json_lenient(content: str) -> dict[str, Any]:
+    """Parse JSON from a model response, tolerating local-model quirks.
+
+    Handles: markdown ```json fences, leading/trailing prose, and truncated
+    output (unterminated strings / unbalanced brackets) by repairing before a
+    final parse. Falls back to {} only if nothing usable can be recovered.
+    """
+    import re
+
+    if not content:
+        return {}
+    text = content.strip()
+    # Strip ```json ... ``` fences if present.
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if m:
+        text = m.group(1).strip()
+    # Narrow to the outermost JSON object.
+    start = text.find("{")
+    if start > 0:
+        text = text[start:]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Repair a truncated response: close an open string, then balance brackets.
+    repaired = text
+    # If an odd number of unescaped quotes, the last string is unterminated.
+    if repaired.count('"') - repaired.count('\\"') and (repaired.count('"') % 2 == 1):
+        repaired += '"'
+    # Balance braces/brackets by appending closers in the right order.
+    opens = [c for c in repaired if c in "{[}]"]
+    stack = []
+    for c in opens:
+        if c in "{[":
+            stack.append(c)
+        elif c in "}]" and stack:
+            stack.pop()
+    for c in reversed(stack):
+        repaired += "}" if c == "{" else "]"
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        return {}
+
+
 class AIClient(abc.ABC):
     @abc.abstractmethod
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
@@ -51,7 +96,7 @@ class OpenAIClient(AIClient):
             max_tokens=self._max_tokens_json,
         )
         content = resp.choices[0].message.content or "{}"
-        return json.loads(content)
+        return _parse_json_lenient(content)
 
     def complete_text(self, system: str, user: str) -> str:
         resp = self._client.chat.completions.create(

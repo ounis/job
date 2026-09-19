@@ -17,7 +17,7 @@ from .logging_setup import get_logger
 from datetime import datetime, timezone
 
 from .models import CVProfile, EventType, JobEvent, JobStatus, ScoredJob
-from .pdf.render import render_cv_pdf, render_letter_pdf
+from .pdf.render import render_cv_pdf, render_cv_pdf_html, render_letter_pdf
 from .providers import get_providers
 
 log = get_logger("app.services")
@@ -58,6 +58,16 @@ def ensure_profile(force: bool = False) -> CVProfile:
     )
     log.debug("Skills: %s", ", ".join(profile.skills))
     return profile
+
+
+def _html_to_text(html: str) -> str:
+    """Rough HTML->text for the plain-text CV fallback renderer."""
+    import re
+    t = re.sub(r"(?i)</(p|h2|h3|li|ul|ol)>", "\n", html)
+    t = re.sub(r"(?i)<li[^>]*>", "• ", t)
+    t = re.sub(r"<[^>]+>", "", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
 
 
 def _is_excluded(posting, settings) -> bool:
@@ -234,11 +244,18 @@ def prepare_application(key: str, language: str = "de") -> dict:
     # generate_cv / generate_letter never raise now: they fall back to plain,
     # non-AI drafts when OpenAI is unavailable and report ai_used=False so we
     # can warn the user the documents are not AI-tailored.
+    # Combine global + per-job custom instructions to steer generation.
+    extra = "\n".join(
+        s for s in (db.get_global_instructions(), db.get_job_instructions(key)) if s.strip()
+    )
+    if extra.strip():
+        log.info("Using custom instructions (%d chars) for %s", len(extra), key)
+
     log.info("Generating CV for %r @ %r", posting.title, posting.company)
-    cv_text, cv_ai = ai_ops.generate_cv(profile, posting, language)
-    log.debug("Generated CV (%d chars, ai=%s)", len(cv_text), cv_ai)
+    cv_html, cv_ai = ai_ops.generate_cv_html(profile, posting, language, extra)
+    log.debug("Generated CV HTML (%d chars, ai=%s)", len(cv_html), cv_ai)
     log.info("Generating motivation letter")
-    letter_text, letter_ai = ai_ops.generate_letter(profile, posting, language)
+    letter_text, letter_ai = ai_ops.generate_letter(profile, posting, language, extra)
     log.debug("Generated letter (%d chars, ai=%s)", len(letter_text), letter_ai)
     ai_used = cv_ai and letter_ai
     if not ai_used:
@@ -247,9 +264,17 @@ def prepare_application(key: str, language: str = "de") -> dict:
             key, cv_ai, letter_ai,
         )
 
-    cv_pdf = render_cv_pdf(cv_text, posting)
+    # Render the styled CV from HTML; fall back to the plain-text renderer if
+    # xhtml2pdf fails for any reason so a prepare never breaks.
+    try:
+        cv_pdf = render_cv_pdf_html(cv_html, posting, profile)
+    except Exception as e:
+        log.warning("HTML CV render failed (%s); using plain-text renderer", e)
+        cv_pdf = render_cv_pdf(_html_to_text(cv_html), posting)
     letter_pdf = render_letter_pdf(letter_text, posting, profile)
     log.info("Rendered PDFs: %s | %s", cv_pdf.name, letter_pdf.name)
+    # Store the CV HTML (for the web preview) as the generated_cv field.
+    cv_text = cv_html
 
     payload = {
         "job_key": key,
@@ -297,6 +322,20 @@ def unmark_job_applied(key: str) -> None:
     """Move an applied job back to 'prepared' (clears the application date)."""
     db.unmark_applied(key)
     log.info("Reverted %s from applied back to prepared", key)
+
+
+def get_global_instructions() -> str:
+    return db.get_global_instructions()
+
+
+def set_global_instructions(text: str) -> None:
+    db.set_global_instructions((text or "").strip())
+    log.info("Global generation instructions updated (%d chars)", len((text or '').strip()))
+
+
+def set_job_instructions(key: str, text: str) -> None:
+    db.set_job_instructions(key, (text or "").strip())
+    log.info("Per-job instructions updated for %s (%d chars)", key, len((text or '').strip()))
 
 
 def fetch_bundesagentur_description(refnr: str) -> str:

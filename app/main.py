@@ -396,10 +396,18 @@ def settings_page(request: Request):
     }
     resp = templates.TemplateResponse(
         request, "settings.html",
-        {"groups": groups, "status": status, "flash": _take_flash(request)},
+        {"groups": groups, "status": status,
+         "global_instructions": services.get_global_instructions(),
+         "flash": _take_flash(request)},
     )
     _clear_flash(resp)
     return resp
+
+
+@app.post("/settings/instructions")
+def save_global_instructions(instructions: str = Form("")):
+    services.set_global_instructions(instructions)
+    return _redirect_with_msg("Global instructions saved.", "/settings")
 
 
 @app.post("/settings")
@@ -487,6 +495,12 @@ def add_event_route(
 def delete_event_route(key: str, event_id: int, request: Request):
     services.delete_event(event_id)
     return _redirect_back(request, "Event removed.")
+
+
+@app.post("/jobs/{key:path}/instructions")
+def save_job_instructions(key: str, request: Request, instructions: str = Form("")):
+    services.set_job_instructions(key, instructions)
+    return _redirect_back(request, "Job instructions saved. Regenerate to apply.")
 
 
 @app.post("/jobs/{key:path}/notes/add")
@@ -692,9 +706,10 @@ def job_detail(request: Request, key: str):
         {
             "job": job,
             "application": application,
-            "cv_html": _format_document(application["generated_cv"]) if application else "",
+            "cv_html": _format_cv_html(application["generated_cv"]) if application else "",
             "letter_html": _format_document(application["motivation_letter"]) if application else "",
             "description_html": _format_description(job.posting.description),
+            "job_instructions": db.get_job_instructions(key),
             "events": events,
             "notes": notes,
             "statuses": list(JobStatus),
@@ -753,12 +768,45 @@ def _format_description(text: str) -> str:
             return f"<{slash}{name}>" if name in _ALLOWED_DESC_TAGS else ""
         cleaned = _re.sub(r"<\s*(/?)\s*([a-zA-Z0-9]+)[^>]*>", repl, text)
         return cleaned
-    # Plain text: escape, then paragraph-ize.
+    # Plain text (often with light markdown): unescape backslash-escaped
+    # asterisks, HTML-escape, then apply markdown bold/headings + paragraphs.
+    text = text.replace("\\*", "*")
     escaped = _html.escape(text)
-    paras = _re.split(r"\n\s*\n", escaped.strip())
-    return "".join(
-        "<p>" + p.replace("\n", "<br>") + "</p>" for p in paras if p.strip()
-    )
+
+    def _inline_md(s: str) -> str:
+        # **bold** and *italic* (after escaping, so it's safe).
+        s = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+        s = _re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", s)
+        return s
+
+    out = []
+    for block in _re.split(r"\n\s*\n", escaped.strip()):
+        lines = block.split("\n")
+        head = lines[0].strip()
+        # A line that's entirely bold or starts with # is a heading.
+        m = _re.fullmatch(r"\*\*(.+?)\*\*:?|#+\s*(.+)", head)
+        if m and len(head) < 80:
+            out.append(f"<h4>{_inline_md((m.group(1) or m.group(2)).strip())}</h4>")
+            lines = lines[1:]
+        rest = [l for l in lines if l.strip()]
+        if rest:
+            out.append("<p>" + "<br>".join(_inline_md(l) for l in rest) + "</p>")
+    return "".join(out)
+
+
+def _format_cv_html(stored: str) -> str:
+    """Render the stored CV for the web preview.
+
+    New CVs are stored as sanitized HTML (from generate_cv_html) — pass them
+    through the same sanitizer. Older CVs stored as plain text fall back to the
+    markdown-ish document formatter.
+    """
+    if not stored:
+        return ""
+    if _re.search(r"<(h2|h3|ul|li|p|strong)\b", stored, _re.IGNORECASE):
+        from .ai.operations import _sanitize_cv_html
+        return _sanitize_cv_html(stored)
+    return _format_document(stored)
 
 
 def _format_document(text: str) -> str:

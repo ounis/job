@@ -149,6 +149,19 @@
 </section>
 
 <section class="panel">
+  <h2>Custom instructions for this job</h2>
+  <p class="muted small">
+    Extra guidance for generating this job's CV and letter (added on top of your
+    global instructions). Regenerate after saving to apply.
+  </p>
+  <form method="post" action="/jobs/{{ job.posting.key }}/instructions" class="instr-form">
+    <textarea name="instructions" rows="3"
+      placeholder="e.g. Stress my microservices work; keep the letter under 3 paragraphs.">{{ job_instructions }}</textarea>
+    <button type="submit" class="btn btn-primary small">Save instructions</button>
+  </form>
+</section>
+
+<section class="panel">
   <div class="panel-head">
     <h2>Calendar &amp; events</h2>
     {% if events.upcoming or events.past %}

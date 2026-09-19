@@ -107,6 +107,12 @@ table.jobs th { font-size: 12px; text-transform: uppercase; color: var(--muted);
   padding: 8px 10px; border: 1px solid #d5dae1; border-radius: 6px;
   font-size: 14px; resize: vertical; font-family: inherit;
 }
+.instr-form { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
+.instr-form textarea {
+  padding: 9px 11px; border: 1px solid #d5dae1; border-radius: 8px;
+  font-size: 14px; resize: vertical; font-family: inherit; line-height: 1.5;
+}
+.instr-form button { align-self: flex-start; }
 .event-list, .note-list { list-style: none; padding: 0; margin: 8px 0 0; }
 .event-item, .note-item {
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;

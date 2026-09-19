@@ -94,6 +94,22 @@
   </div>
 </form>
 
+<div class="settings-card" style="margin-top:16px;">
+  <div class="settings-card-head">
+    <h2>Global CV &amp; letter instructions</h2>
+    <p class="muted small">
+      Extra guidance added to every generated CV and letter (e.g. "emphasize
+      leadership", "always mention my AWS certification", "keep it to one page").
+      Applied on top of your CV — it will not invent false facts.
+    </p>
+  </div>
+  <form method="post" action="/settings/instructions" class="instr-form">
+    <textarea name="instructions" rows="4"
+      placeholder="e.g. Emphasize backend and cloud experience; mention my German is fluent.">{{ global_instructions }}</textarea>
+    <button type="submit" class="btn btn-primary small">Save instructions</button>
+  </form>
+</div>
+
 <script>
   document.querySelectorAll('.reveal-btn').forEach(function (b) {
     b.addEventListener('click', function () {

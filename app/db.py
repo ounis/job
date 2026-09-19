@@ -87,7 +87,16 @@ CREATE TABLE IF NOT EXISTS notes (
     FOREIGN KEY (job_key) REFERENCES jobs(key) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_notes_job ON notes(job_key);
+
+CREATE TABLE IF NOT EXISTS kv (
+    k          TEXT PRIMARY KEY,
+    v          TEXT,
+    updated_at TEXT NOT NULL
+);
 """
+
+# Key for the global custom generation instruction stored in the kv table.
+GLOBAL_INSTRUCTIONS_KEY = "global_instructions"
 
 
 def _now() -> str:
@@ -114,6 +123,8 @@ def init_db() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
         if "applied_at" not in cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN applied_at TEXT")
+        if "custom_instructions" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN custom_instructions TEXT")
 
 
 # ----------------------------------------------------------------------------
@@ -495,6 +506,53 @@ def list_all_events(
 # ----------------------------------------------------------------------------
 # Notes (personal impressions / key points per job)
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Custom generation instructions (global + per-job)
+# ----------------------------------------------------------------------------
+def get_kv(key: str, default: str = "") -> str:
+    with connect() as conn:
+        row = conn.execute("SELECT v FROM kv WHERE k = ?", (key,)).fetchone()
+    return (row["v"] if row and row["v"] is not None else default)
+
+
+def set_kv(key: str, value: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO kv (k, v, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at",
+            (key, value, _now()),
+        )
+
+
+def get_global_instructions() -> str:
+    return get_kv(GLOBAL_INSTRUCTIONS_KEY, "")
+
+
+def set_global_instructions(text: str) -> None:
+    set_kv(GLOBAL_INSTRUCTIONS_KEY, text)
+
+
+def get_job_instructions(key: str) -> str:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT custom_instructions FROM jobs WHERE key = ?", (key,)
+        ).fetchone()
+    if not row:
+        return ""
+    try:
+        return row["custom_instructions"] or ""
+    except (IndexError, KeyError):
+        return ""
+
+
+def set_job_instructions(key: str, text: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET custom_instructions = ?, updated_at = ? WHERE key = ?",
+            (text, _now(), key),
+        )
+
+
 def add_note(key: str, body: str) -> int:
     with connect() as conn:
         cur = conn.execute(

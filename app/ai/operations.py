@@ -282,14 +282,53 @@ def _language_name(language: str) -> str:
     return LANGUAGES.get((language or DEFAULT_LANGUAGE).lower(), LANGUAGES[DEFAULT_LANGUAGE])
 
 
+# Preamble lines local models sometimes emit before the actual document, e.g.
+# "Here is the rewritten CV in German, tailored to ...:" or "Hier ist ...".
+_PREAMBLE_RE = re.compile(
+    r"^\s*(here is|here's|below is|sure[,!]?|certainly[,!]?|hier ist|"
+    r"hier ist die|voici|following is|i have (written|rewritten|prepared))\b.*",
+    re.IGNORECASE,
+)
+
+
+def _strip_preamble(text: str) -> str:
+    """Drop a leading 'Here is the ... :' style intro line the model may add.
+
+    Only removes the FIRST line, and only if it looks like a meta-introduction
+    (matches the preamble pattern, or is a short line ending with a colon).
+    Keeps the real document intact.
+    """
+    if not text:
+        return text
+    lines = text.lstrip().split("\n")
+    if not lines:
+        return text
+    first = lines[0].strip()
+    looks_meta = _PREAMBLE_RE.match(first) or (
+        first.endswith(":") and len(first) < 120 and " " in first
+    )
+    if looks_meta:
+        rest = lines[1:]
+        # Also drop a blank line left after removing the intro.
+        while rest and not rest[0].strip():
+            rest.pop(0)
+        return "\n".join(rest).strip()
+    return text.strip()
+
+
 _CV_SYSTEM = """You are an expert resume writer. Rewrite the candidate's CV to
 best fit the target job while staying strictly truthful — never invent
 experience, skills, employers or dates. You may re-order, re-emphasize and
 re-phrase real content to highlight relevance. Output a clean, ATS-friendly
 plain-text CV with clear sections (Contact, Summary, Skills, Experience,
 Education, Languages). No markdown fences.
+Include EVERYTHING from the source CV — every experience, education entry,
+skill and language. Never drop or merge roles, skills or languages; you may
+shorten descriptions but nothing may disappear.
 Write the ENTIRE CV in {lang}, regardless of the language of the source CV or
-the job posting."""
+the job posting.
+Output ONLY the CV itself — do NOT add any preamble, intro line, or explanation
+like "Here is the CV...". Start directly with the candidate's name/contact."""
 
 
 def generate_cv(
@@ -313,10 +352,120 @@ def generate_cv(
         f"CANDIDATE CV (source of truth):\n{profile.raw_text[:settings.ai_gen_cv_chars]}"
     )
     try:
-        return get_ai_client().complete_text(_CV_SYSTEM.format(lang=lang), user), True
+        text = get_ai_client().complete_text(_CV_SYSTEM.format(lang=lang), user)
+        return _strip_preamble(text), True
     except Exception as e:
         log.warning("generate_cv: AI failed (%s) — using non-AI fallback", _brief(e))
         return _cv_fallback(profile, job), False
+
+
+_CV_HTML_SYSTEM = """You are an expert resume writer. Rewrite the candidate's CV
+to best fit the target job while staying strictly truthful — never invent
+experience, skills, employers or dates. Re-order, re-emphasize and re-phrase
+real content to highlight relevance for this role.
+
+IMPORTANT: Include EVERYTHING from the source CV — every job/experience entry,
+every skill, every language, and every education entry. Do not drop, merge or
+omit any role, employer, date, skill or language. You may re-order and shorten
+descriptions, but nothing may disappear. You may add skills only if the target
+job clearly requires them AND they are supported by the candidate's real
+experience — never fabricate.
+
+Output the CV BODY as simple HTML using ONLY these tags:
+  <h2> for section titles (Summary, Skills, Experience, Education, Languages),
+  <h3> for a job/role line (title, company, period),
+  <p> for paragraphs, <ul>/<li> for bullet points, <strong> for emphasis.
+Do NOT include <html>, <head>, <body>, <style>, images, classes or attributes.
+Do NOT include the candidate's name/contact header (added separately).
+CRITICAL: Write ALL text ENTIRELY in {lang} — section titles and content alike.
+Do NOT mix languages regardless of the CV's or job posting's language.
+Output ONLY the HTML — no preamble, no code fences."""
+
+
+def _instructions_block(extra: str) -> str:
+    """Format user-provided extra instructions for injection into a prompt."""
+    extra = (extra or "").strip()
+    if not extra:
+        return ""
+    return (
+        "\n\nADDITIONAL USER INSTRUCTIONS (follow these, but never invent false "
+        f"facts):\n{extra}"
+    )
+
+
+def generate_cv_html(
+    profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE,
+    extra_instructions: str = "",
+) -> tuple[str, bool]:
+    """Return (cv_body_html, ai_used).
+
+    Produces the CV body as a small whitelist of HTML tags so it can be rendered
+    into a styled PDF. `extra_instructions` (global + per-job) are injected into
+    the prompt. Falls back to a simple HTML rendering of the plain-text CV when
+    AI is unavailable.
+    """
+    settings = get_settings()
+    lang = _language_name(language)
+    if not settings.ai_enabled:
+        text, _ = generate_cv(profile, job, language)  # non-AI fallback text
+        return _text_to_html(text), False
+
+    user = (
+        f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
+        f"Description: {job.description[:settings.ai_gen_desc_chars]}\n\n"
+        f"CANDIDATE CV (source of truth):\n{profile.raw_text[:settings.ai_gen_cv_chars]}"
+        f"{_instructions_block(extra_instructions)}"
+    )
+    try:
+        html = get_ai_client().complete_text(_CV_HTML_SYSTEM.format(lang=lang), user)
+        return _sanitize_cv_html(_strip_preamble(html)), True
+    except Exception as e:
+        log.warning("generate_cv_html: AI failed (%s) — using non-AI fallback", _brief(e))
+        text, _ = generate_cv(profile, job, language)
+        return _text_to_html(text), False
+
+
+# Tags allowed in the AI-produced CV body.
+_CV_ALLOWED_TAGS = {"h2", "h3", "p", "ul", "ol", "li", "strong", "b", "em", "i", "br"}
+
+
+def _sanitize_cv_html(html: str) -> str:
+    """Keep only whitelisted CV tags (attributes stripped); drop the rest.
+
+    Also removes any code fences and document-level wrappers a model might add.
+    """
+    html = re.sub(r"```(?:html)?", "", html)
+    # Drop script/style blocks (tag + contents) before stripping other wrappers.
+    html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", html)
+    html = re.sub(r"(?is)</?(?:html|head|body|style|script|div|span)[^>]*>", "", html)
+
+    def repl(m):
+        slash, name = m.group(1), m.group(2).lower()
+        return f"<{slash}{name}>" if name in _CV_ALLOWED_TAGS else ""
+
+    return re.sub(r"<\s*(/?)\s*([a-zA-Z0-9]+)[^>]*>", repl, html).strip()
+
+
+def _text_to_html(text: str) -> str:
+    """Convert a plain-text (light-markdown) CV into the same simple HTML."""
+    import html as _h
+    out = []
+    for block in re.split(r"\n\s*\n", (text or "").strip()):
+        lines = [l for l in block.split("\n")]
+        head = lines[0].strip() if lines else ""
+        m = re.fullmatch(r"\*\*(.+?)\*\*:?|#+\s*(.+)", head)
+        if m and len(head) < 60:
+            out.append(f"<h2>{_h.escape((m.group(1) or m.group(2)).strip())}</h2>")
+            lines = lines[1:]
+        rest = [l for l in lines if l.strip()]
+        if not rest:
+            continue
+        if all(re.match(r"^\s*([-*•])\s+", l) for l in rest):
+            items = "".join(f"<li>{_h.escape(re.sub(r'^\\s*([-*•])\\s+','',l))}</li>" for l in rest)
+            out.append(f"<ul>{items}</ul>")
+        else:
+            out.append("<p>" + "<br>".join(_h.escape(l) for l in rest) + "</p>")
+    return "".join(out)
 
 
 def _cv_fallback(profile: CVProfile, job: JobPosting) -> str:
@@ -387,15 +536,24 @@ motivation letter (cover letter). Keep it to 3-4 short paragraphs. Reference the
 specific role and company, connect the candidate's real, relevant experience to
 the role's needs, and close with a call to action. Stay truthful — do not invent
 facts. Output only the letter body text.
-Write the ENTIRE letter in {lang}, regardless of the language of the CV or the
-job posting."""
+
+CRITICAL: Write the letter ENTIRELY in {lang} — the salutation, every paragraph,
+AND the closing/sign-off must all be in {lang}. Do NOT mix languages, even if the
+job posting or CV is in another language. If {lang} is English, use an English
+greeting ("Dear Hiring Team,") and English closing ("Kind regards,"). If {lang}
+is German, use German ("Sehr geehrte Damen und Herren," / "Mit freundlichen
+Grüßen,").
+Output ONLY the letter — no preamble or explanation. Start directly with the
+salutation in {lang}."""
 
 
 def generate_letter(
-    profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE
+    profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE,
+    extra_instructions: str = "",
 ) -> tuple[str, bool]:
-    """Return (letter_text, ai_used) written in `language`. Falls back to a
-    plain template when AI is unavailable, same contract as generate_cv."""
+    """Return (letter_text, ai_used) written in `language`. `extra_instructions`
+    (global + per-job) are injected into the prompt. Falls back to a plain
+    template when AI is unavailable, same contract as generate_cv."""
     settings = get_settings()
     lang = _language_name(language)
     if not settings.ai_enabled:
@@ -410,12 +568,37 @@ def generate_letter(
         f"Summary: {profile.summary}\n"
         f"Skills: {', '.join(profile.skills)}\n"
         f"Experience highlights:\n{profile.raw_text[:settings.ai_gen_letter_cv_chars]}"
+        f"{_instructions_block(extra_instructions)}"
     )
     try:
-        return get_ai_client().complete_text(_LETTER_SYSTEM.format(lang=lang), user), True
+        text = get_ai_client().complete_text(_LETTER_SYSTEM.format(lang=lang), user)
+        return _fix_letter_language(_strip_preamble(text), language), True
     except Exception as e:
         log.warning("generate_letter: AI failed (%s) — using non-AI fallback", _brief(e))
         return _letter_fallback(profile, job, language), False
+
+
+def _fix_letter_language(text: str, language: str) -> str:
+    """Safety net: correct a salutation/closing left in the wrong language.
+
+    Local models sometimes wrap an English body in German greeting/sign-off (or
+    vice versa). Swap the boilerplate to match the requested language.
+    """
+    if not text:
+        return text
+    lang = (language or DEFAULT_LANGUAGE).lower()
+    de_greet = re.compile(r"^\s*sehr geehrte[^\n,]*,?", re.IGNORECASE)
+    en_greet = re.compile(r"^\s*dear[^\n,]*,?", re.IGNORECASE)
+    de_close = re.compile(r"mit freundlichen gr[üu]ßen,?", re.IGNORECASE)
+    en_close = re.compile(r"(kind regards|best regards|sincerely|yours faithfully),?",
+                          re.IGNORECASE)
+    if lang == "en":
+        text = de_greet.sub("Dear Hiring Team,", text, count=1)
+        text = de_close.sub("Kind regards,", text)
+    elif lang == "de":
+        text = en_greet.sub("Sehr geehrte Damen und Herren,", text, count=1)
+        text = en_close.sub("Mit freundlichen Grüßen,", text)
+    return text
 
 
 def _letter_fallback(profile: CVProfile, job: JobPosting, language: str = DEFAULT_LANGUAGE) -> str:
