@@ -24,12 +24,18 @@ class AIClient(abc.ABC):
 
 
 class OpenAIClient(AIClient):
-    def __init__(self) -> None:
+    """Client for OpenAI or any OpenAI-compatible server (e.g. Ollama).
+
+    base_url=None -> OpenAI cloud. Set base_url to target a compatible server.
+    """
+
+    def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
         from openai import OpenAI
 
         settings = get_settings()
-        self._model = settings.openai_model
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._model = model
+        # Ollama ignores the key but the SDK requires a non-empty string.
+        self._client = OpenAI(api_key=api_key or "not-needed", base_url=base_url)
         self._max_tokens_json = settings.ai_max_tokens_json
         self._max_tokens_text = settings.ai_max_tokens_text
 
@@ -62,8 +68,19 @@ class OpenAIClient(AIClient):
 
 def get_ai_client() -> AIClient:
     settings = get_settings()
-    if not settings.ai_enabled:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to .env to enable AI features."
+    provider = settings.ai_provider.lower()
+
+    if provider == "ollama":
+        # Local, OpenAI-compatible server — no key required.
+        return OpenAIClient(
+            api_key="",
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
         )
-    return OpenAIClient()
+
+    # Default: OpenAI cloud.
+    if not settings.openai_api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to .env, or set AI_PROVIDER=ollama."
+        )
+    return OpenAIClient(api_key=settings.openai_api_key, model=settings.openai_model)

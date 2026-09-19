@@ -38,25 +38,57 @@ marking applied stamps the application date; you can unmark applied (back to
 **AI** or **non-AI** depending on whether OpenAI was available when its
 documents were generated.
 
-### Working without an OpenAI key
+### Status lifecycle & outcomes
+
+Statuses: `new` → `prepared` → `applied`, plus outcomes `interviewing`,
+`accepted`, `rejected`, `no_response`, `withdrawn`, and `ignored` — set from the
+job page. Each prepared/applied job is tagged **AI** or **non-AI** by how its
+documents were generated.
+
+### Calendar, events & notes
+
+- **Events** per job (calls, interviews, deadlines) with a date/time — split
+  into upcoming and past.
+- **Notes** per job — timestamped, for impressions and key points.
+- A **per-job calendar** and a **global `/calendar`** across all jobs, filterable
+  by when (upcoming/past), job status, and event type.
+- **ICS export** (global, respecting filters, and per-job) to import into Apple/
+  Google/Outlook calendars.
+
+### AI providers (OpenAI or local Ollama)
+
+`AI_PROVIDER` selects the backend:
+- **`openai`** (default) — cloud, needs `OPENAI_API_KEY`.
+- **`ollama`** — a local, free, OpenAI-compatible server; no key or cost.
+  Install [Ollama](https://ollama.com), run `ollama pull llama3.1`, set
+  `AI_PROVIDER=ollama` (model/URL via `OLLAMA_MODEL` / `OLLAMA_BASE_URL`).
+
+### Working without any AI
 
 Everything works without AI, just with cruder results:
 - **Scanning/scoring** falls back to a keyword heuristic (derives keywords and
   skills from your CV text — works for any field, not just tech).
 - **Preparing** still produces a plain, non-tailored CV + letter from your
-  profile, clearly tagged **non-AI** in the UI. Add a key and **Regenerate** to
-  upgrade them to AI-tailored versions.
+  profile, clearly tagged **non-AI** in the UI. Enable a provider and
+  **Regenerate** to upgrade them to AI-tailored versions.
+
+### Live logs
+
+A **`/logs`** page streams `data/job.log` in real time with color-coded levels
+and a level filter (errors + warnings by default).
 
 ## Stack
 
 - **FastAPI + Uvicorn** web app, server-rendered (Jinja2) — no frontend build.
 - **SQLite** for tracking (single file at `data/jobs.db`).
-- **OpenAI** for CV parsing, seniority inference, relevance scoring, and
-  document generation (behind a swappable `AIClient`).
+- **OpenAI or local Ollama** for CV parsing, seniority inference, relevance
+  scoring, and document generation (behind a swappable `AIClient`; pick with
+  `AI_PROVIDER`).
 - **JSearch (RapidAPI)** as the default job source — a broad aggregator that
   pulls from Google for Jobs (LinkedIn, Indeed, Glassdoor, company pages, ...).
-  **Adzuna** (also an aggregator) and a `bundesagentur` stub are included too.
-  Providers are pluggable and results from multiple are merged + de-duplicated.
+  **Adzuna** and **Bundesagentur** (German Federal Employment Agency, v6 API)
+  are included too. Providers are pluggable; results merge + de-duplicate, and
+  the source board is shown per posting.
 - **ReportLab** for PDF generation (pure Python — no system deps on Windows).
 
 ## Download the Windows build (no Python needed)
@@ -130,19 +162,22 @@ to `.env` and take effect immediately, no restart), or edit `.env` directly.
 
 | Key | What it does |
 | --- | --- |
-| `OPENAI_API_KEY` | Enables AI parsing/scoring and AI-tailored CV+letter generation. Without it, scanning uses a keyword heuristic and preparing produces plain non-AI drafts. |
+| `AI_PROVIDER` | `openai` (cloud, needs key) or `ollama` (local, free, no key). |
+| `OPENAI_API_KEY` | Enables AI when `AI_PROVIDER=openai`. Without any AI, scanning uses a keyword heuristic and preparing produces plain non-AI drafts. |
 | `OPENAI_MODEL` | Default `gpt-4o-mini` (cheapest). |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Local Ollama server (default `http://localhost:11434/v1`, `llama3.1`). Used when `AI_PROVIDER=ollama`. |
 | `RAPIDAPI_KEY` | Key for JSearch (RapidAPI) — the default, broadest source. Subscribe (free tier) at https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch. |
 | `JSEARCH_MAX_PAGES` | Pages fetched per JSearch query (~10 results/page). Free tier = `1`. Raise only if your plan allows more. |
 | `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Free credentials from https://developer.adzuna.com/ (alternative/additional source). |
 | `ACTIVE_PROVIDERS` | Comma list: `jsearch`, `adzuna`, `bundesagentur`. Run several — results merge + de-dupe. |
-| `SEARCH_LOCATION` | `Germany` = country-wide, or a city like `Berlin`. |
+| `SEARCH_LOCATION` | `Germany` = country-wide, a city like `Berlin`, or a comma list (`remote, Berlin`) — each searched and merged. |
 | `SEARCH_DISTANCE_KM` | Radius around the location. |
 | `SEARCH_KEYWORDS` | Comma list. Leave empty to auto-derive from your CV. |
 | `MAX_RESULTS` | Jobs pulled per scan. |
 | `CV_PATH` | A **directory** (default `data`) to auto-scan for CVs, or a specific file to pin one. |
 | `MIN_RELEVANCE` | Minimum score (0–100) to show a job as a match. Use ~`20` with the no-AI heuristic; ~`40` once AI scoring is on. |
-| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. Logs also mirror to `data/job.log` (rotating, fresh each run). |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR`. Logs also mirror to `data/job.log` (rotating; kept across runs). |
+| `EXCLUDE_COMPANIES` / `EXCLUDE_LOCATIONS` / `EXCLUDE_TITLE_KEYWORDS` / `EXCLUDE_DESCRIPTION_KEYWORDS` / `EXCLUDE_SOURCES` | Comma lists (case-insensitive substring). A job is dropped during a scan if it matches any. |
 
 ### AI usage & cost controls
 
@@ -164,7 +199,9 @@ spend. All are editable from the Settings page.
   https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch → copy your RapidAPI key.
 - **Adzuna** (optional additional source): register at
   https://developer.adzuna.com/ → free `app_id` + `app_key`.
-- **OpenAI** (AI): https://platform.openai.com/ → API key.
+- **OpenAI** (AI): https://platform.openai.com/ → API key. Or skip it and use
+  **Ollama** locally for free: install from https://ollama.com, `ollama pull
+  llama3.1`, set `AI_PROVIDER=ollama`.
 
 ## Project layout
 
@@ -177,16 +214,17 @@ app/
   services.py        scan + apply orchestration
   ai/
     cv_reader.py     extract text from pdf/docx/txt/md
-    client.py        swappable AI client (OpenAI)
+    client.py        swappable AI client (OpenAI / Ollama)
     operations.py    parse CV, score, generate CV + letter
   providers/
     base.py          JobProvider interface
     jsearch.py       JSearch / RapidAPI (default, broad aggregator)
     adzuna.py        Adzuna (Germany)
-    bundesagentur.py stub, ready to enable
+    bundesagentur.py Bundesagentur (German Federal Employment Agency, v6)
   pdf/render.py      CV + letter -> PDF (ReportLab)
+  ics.py             build .ics calendar exports
   logging_setup.py   console + rotating file logging (data/job.log)
-  templates/         dashboard, job detail, settings, ignored
+  templates/         dashboard, job detail, settings, ignored, calendar, logs
   static/            css + js
 data/                sqlite db, your CV(s), generated/ PDFs, job.log
 run.py               entry point
@@ -194,9 +232,11 @@ run.py               entry point
 
 ## Tracking model
 
-Every job seen is stored with a status: `new`, `prepared`, `applied`, or
-`ignored`. A re-scan never demotes a `prepared`/`applied`/`ignored` job back to
-`new`, so your decisions stick. Prepared/applied jobs also store the generated
+Every job seen is stored with a status: `new`, `prepared`, `applied`,
+`interviewing`, `accepted`, `rejected`, `no_response`, `withdrawn`, or
+`ignored`. A re-scan never demotes a tracked job back to `new`, so your
+decisions stick. You can also **forget** a job to delete it (and its events and
+notes) entirely. Prepared/applied jobs also store the generated
 CV text, the motivation letter text, the PDF paths, the full application
 payload, and (once applied) the application date — all viewable on the job
 detail page. Ignored jobs get their own page where you can restore them, and the

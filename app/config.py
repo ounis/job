@@ -62,8 +62,14 @@ class Settings(BaseSettings):
     )
 
     # AI
+    # ai_provider: "openai" (default) or "ollama" (local, free, no key).
+    ai_provider: str = "openai"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    # Ollama (OpenAI-compatible local server). Model must be pulled first
+    # (e.g. `ollama pull llama3.1`).
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = "llama3.1"
 
     # Adzuna
     adzuna_app_id: str = ""
@@ -190,6 +196,9 @@ class Settings(BaseSettings):
 
     @property
     def ai_enabled(self) -> bool:
+        # Ollama needs no key; OpenAI needs one.
+        if self.ai_provider.lower() == "ollama":
+            return True
         return bool(self.openai_api_key)
 
 
