@@ -47,6 +47,49 @@ _JOB_SITES = (
 )
 
 
+import re
+from urllib.parse import urlsplit
+
+# Individual-posting URL signatures per board. A real posting URL matches one of
+# these; anything else on that board is treated as a listing/category/search
+# page and dropped. Boards not listed here are kept as-is (the AI still filters).
+_POSTING_PATTERNS = {
+    "stepstone.": re.compile(r"-inline\.html$|/stellenangebote--.*\d", re.I),
+    "linkedin.": re.compile(r"/jobs/view/.*\d{6,}", re.I),
+    "indeed.": re.compile(r"[?&]vjk=|/viewjob|/rc/clk", re.I),
+    "xing.": re.compile(r"/jobs/[^/]+-\d+", re.I),
+}
+
+# Path fragments that mark a search/listing/category page on any board.
+_LISTING_HINTS = re.compile(
+    r"/(jobs|stellenangebote|stellen|suche|search|s|q|karriere|jobsuche)/?$"
+    r"|/(jobs|stellen)/[a-z-]+/?$"          # e.g. /jobs/senior-qa-engineer
+    r"|[?&](q|keywords|what|where|searchterm)=",
+    re.I,
+)
+
+
+def _looks_like_listing(url: str) -> bool:
+    """True if the URL is a search/category/listing page rather than a single job.
+
+    Uses per-board posting signatures where known (a real posting must match),
+    plus generic listing-path hints for everything else. Conservative: when a
+    board is unknown and no listing hint matches, the URL is kept.
+    """
+    if not url:
+        return True
+    host = (urlsplit(url).hostname or "").lower()
+    path_q = url[len(urlsplit(url).scheme) + 3 + len(host):]  # path + query
+
+    for needle, posting_re in _POSTING_PATTERNS.items():
+        if needle in host:
+            # Known board: keep only if it looks like an individual posting.
+            return not posting_re.search(url)
+
+    # Unknown board: drop only if it clearly looks like a listing/search page.
+    return bool(_LISTING_HINTS.search(path_q))
+
+
 class AIWebProvider(JobProvider):
     name = "ai_web"
 
@@ -112,6 +155,14 @@ class AIWebProvider(JobProvider):
             if isinstance(o, dict) and (o.get("link") or "").strip()
         ]
         log.info("Serper returned %d organic result(s)", len(results))
+
+        # Drop search/category/listing pages (e.g. stepstone.de/jobs/senior-qa-
+        # engineer) — they aren't a specific posting and "Open posting" leads to
+        # a generic list. Filtering here also saves the AI from structuring them.
+        before = len(results)
+        results = [r for r in results if not _looks_like_listing(r["link"])]
+        if before - len(results):
+            log.info("Dropped %d listing/category page(s)", before - len(results))
         if not results:
             return []
 
