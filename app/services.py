@@ -299,11 +299,39 @@ def unmark_job_applied(key: str) -> None:
     log.info("Reverted %s from applied back to prepared", key)
 
 
+def fetch_bundesagentur_description(refnr: str) -> str:
+    """Fetch a Bundesagentur job's full description on demand."""
+    from .providers.bundesagentur import BundesagenturProvider
+    return BundesagenturProvider().fetch_description(refnr)
+
+
 def forget_job(key: str) -> bool:
-    """Permanently delete a job and everything attached to it."""
+    """Permanently delete a job, its events/notes, and any generated PDFs."""
+    # Remove generated documents from disk first (paths from the stored app).
+    app = db.get_application(key)
+    if app:
+        _delete_generated_files(app.get("cv_pdf_path"), app.get("letter_pdf_path"))
     removed = db.delete_job(key)
     log.info("Forgot job %s (existed=%s)", key, removed)
     return removed
+
+
+def _delete_generated_files(*paths: str | None) -> None:
+    """Delete generated PDF files, but only within data/generated/ for safety."""
+    from pathlib import Path
+    from .config import GENERATED_DIR
+
+    gen_root = GENERATED_DIR.resolve()
+    for p in paths:
+        if not p:
+            continue
+        try:
+            fp = Path(p).resolve()
+            if gen_root in fp.parents and fp.exists():
+                fp.unlink()
+                log.info("Deleted generated file %s", fp.name)
+        except OSError as e:
+            log.warning("Could not delete generated file %s: %s", p, e)
 
 
 def ignore_job(key: str) -> None:

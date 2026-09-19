@@ -130,10 +130,60 @@ table.jobs th { font-size: 12px; text-transform: uppercase; color: var(--muted);
 .cal-table .event-when { white-space: nowrap; }
 
 .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
-.desc { white-space: normal; line-height: 1.6; }
+/* Job description — readable prose, wrapped, keeps paragraph breaks. */
+.desc {
+  white-space: pre-wrap; line-height: 1.65; font-size: 14.5px;
+  color: var(--text); max-width: 760px; word-break: break-word;
+}
+.desc p { margin: 0 0 10px; }
+
+/* Generated CV / letter — plain-text documents rendered as clean prose in a
+   framed "paper" card rather than cramped monospace. */
 .doc {
-  white-space: pre-wrap; background: #f7f8fa; border: 1px solid var(--border);
-  padding: 12px; border-radius: 8px; font-size: 13px; overflow-x: auto;
+  word-break: break-word;
+  background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--primary);
+  padding: 18px 22px; border-radius: 8px; line-height: 1.6; font-size: 14px;
+  color: var(--text); max-width: 780px; box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  font-family: "Georgia", "Iowan Old Style", ui-serif, serif;
+}
+.doc h4 { font-family: inherit; font-size: 14.5px; margin: 14px 0 4px; color: var(--primary); }
+.doc h4:first-child { margin-top: 0; }
+.doc p { margin: 0 0 10px; }
+.doc ul { margin: 4px 0 10px; padding-left: 20px; }
+.doc li { margin: 2px 0; }
+/* The payload stays monospace (it's JSON). */
+.doc-code {
+  white-space: pre-wrap; background: #0f1720; color: #d6dee8;
+  padding: 12px 14px; border-radius: 8px; font-size: 12.5px; overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.doc-block { margin: 10px 0; }
+.doc-block > h3 { font-size: 14px; margin: 0 0 6px; color: var(--primary); }
+
+/* Human-friendly application details (was raw JSON) */
+.payload-details > summary { margin-bottom: 8px; }
+.payload-card {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  max-width: 780px; background: #fff;
+}
+.payload-row {
+  display: flex; gap: 16px; align-items: baseline;
+  padding: 9px 14px; border-top: 1px solid #f0f2f5;
+}
+.payload-row:first-child { border-top: none; }
+.payload-row:nth-child(even) { background: #fafbfc; }
+.payload-label {
+  flex: 0 0 130px; color: var(--muted); font-size: 12.5px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.payload-value { flex: 1; font-size: 14px; word-break: break-word; }
+.tag {
+  display: inline-block; background: #eef1f5; color: var(--text);
+  border-radius: 999px; padding: 2px 9px; font-size: 12.5px; margin: 0 4px 4px 0;
+}
+@media (max-width: 560px) {
+  .payload-row { flex-direction: column; gap: 2px; }
+  .payload-label { flex-basis: auto; }
 }
 details { margin: 8px 0; }
 summary { cursor: pointer; font-weight: 600; }

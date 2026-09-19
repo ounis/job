@@ -676,6 +676,13 @@ def job_detail(request: Request, key: str):
     job = db.get_job(key)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    # Bundesagentur's search response has no full description — fetch it on
+    # demand when viewing the job (cached back into the DB so it's one call).
+    if job.posting.provider == "bundesagentur" and len(job.posting.description or "") < 200:
+        full = services.fetch_bundesagentur_description(job.posting.external_id)
+        if full:
+            db.update_description(key, full)
+            job.posting.description = full
     application = db.get_application(key)
     events = services.split_events(db.list_events_for_job(key))
     notes = db.list_notes_for_job(key)
@@ -685,6 +692,9 @@ def job_detail(request: Request, key: str):
         {
             "job": job,
             "application": application,
+            "cv_html": _format_document(application["generated_cv"]) if application else "",
+            "letter_html": _format_document(application["motivation_letter"]) if application else "",
+            "description_html": _format_description(job.posting.description),
             "events": events,
             "notes": notes,
             "statuses": list(JobStatus),
@@ -713,6 +723,94 @@ def download(name: str):
     if GENERATED_DIR.resolve() not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path, filename=path.name, media_type="application/pdf")
+
+
+import html as _html
+import re as _re
+
+# Minimal HTML tags we allow through in job descriptions; everything else is
+# stripped. No attributes are kept, so there's no room for scripts/handlers.
+_ALLOWED_DESC_TAGS = {"p", "br", "ul", "ol", "li", "b", "strong", "i", "em", "h3", "h4"}
+
+
+def _format_description(text: str) -> str:
+    """Turn a raw job description into safe, readable HTML.
+
+    Providers vary: JSearch returns HTML, Bundesagentur returns plain text with
+    newlines. We keep a tiny whitelist of formatting tags (stripping attributes
+    and everything else) and, for plain text, convert blank lines to paragraphs
+    and single newlines to <br>. Output is safe to render with `| safe`.
+    """
+    if not text:
+        return ""
+    has_tags = bool(_re.search(r"<\w+", text))
+    if has_tags:
+        # Drop script/style blocks (tag + contents) outright.
+        text = _re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", text)
+        # Strip disallowed tags entirely; keep allowed ones without attributes.
+        def repl(m):
+            slash, name = m.group(1), m.group(2).lower()
+            return f"<{slash}{name}>" if name in _ALLOWED_DESC_TAGS else ""
+        cleaned = _re.sub(r"<\s*(/?)\s*([a-zA-Z0-9]+)[^>]*>", repl, text)
+        return cleaned
+    # Plain text: escape, then paragraph-ize.
+    escaped = _html.escape(text)
+    paras = _re.split(r"\n\s*\n", escaped.strip())
+    return "".join(
+        "<p>" + p.replace("\n", "<br>") + "</p>" for p in paras if p.strip()
+    )
+
+
+def _format_document(text: str) -> str:
+    """Render a generated CV/letter (plain text with light markdown) as safe HTML.
+
+    The model emits **bold**, occasional `#`/`##` headings, blank-line-separated
+    paragraphs and indented bullet lines. We escape everything, then apply a
+    minimal, safe transform — no external markdown dependency.
+    """
+    if not text:
+        return ""
+    def is_heading(line: str):
+        s = line.strip()
+        if s.startswith("#"):
+            return s.lstrip("# ").strip()
+        m = _re.fullmatch(r"\*\*(.+?)\*\*:?", s)
+        if m and len(s) < 60:
+            return m.group(1)
+        return None
+
+    out_blocks = []
+    for block in _re.split(r"\n\s*\n", text.strip()):
+        lines = [l for l in block.split("\n")]
+        # If the block starts with a heading line, emit it, then continue with
+        # the remaining lines of the same block (model keeps heading + body
+        # together, separated only by single newlines).
+        if lines:
+            head = is_heading(lines[0])
+            if head is not None:
+                out_blocks.append(f"<h4>{_inline(head)}</h4>")
+                lines = lines[1:]
+        rest = [l for l in lines if l.strip()]
+        if not rest:
+            continue
+        # Bullet list if every remaining line looks like a bullet.
+        if all(_re.match(r"^\s*([-*•]|\u2022)\s+", l) for l in rest):
+            items = "".join(
+                f"<li>{_inline(_re.sub(r'^\\s*([-*•]|\\u2022)\\s+', '', l))}</li>" for l in rest
+            )
+            out_blocks.append(f"<ul>{items}</ul>")
+            continue
+        # Otherwise a paragraph; keep single newlines as <br>.
+        out_blocks.append("<p>" + "<br>".join(_inline(l) for l in rest) + "</p>")
+    return "".join(out_blocks)
+
+
+def _inline(text: str) -> str:
+    """Escape a text fragment and apply inline **bold** / *italic*."""
+    t = _html.escape(text)
+    t = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+    t = _re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", t)
+    return t
 
 
 def _take_flash(request: Request) -> str | None:

@@ -370,6 +370,15 @@ def get_application(key: str) -> Optional[dict]:
     }
 
 
+def update_description(key: str, description: str) -> None:
+    """Persist a (lazily fetched) full description for a job."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET description = ?, updated_at = ? WHERE key = ?",
+            (description, _now(), key),
+        )
+
+
 def delete_job(key: str) -> bool:
     """Permanently remove a job and its events/notes. Returns True if it existed.
 

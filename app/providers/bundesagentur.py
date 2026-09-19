@@ -19,6 +19,8 @@ value.
 """
 from __future__ import annotations
 
+import base64
+
 import httpx
 
 from ..config import get_settings
@@ -30,6 +32,9 @@ log = get_logger("app.providers.bundesagentur")
 
 BASE = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
 API_URL = f"{BASE}/pc/v6/jobs"
+# Detail endpoint returns the full description; refnr is base64-encoded here
+# (unlike the website URL, which uses the raw refnr).
+DETAILS_URL = f"{BASE}/pc/v4/jobdetails/{{code}}"
 DEFAULT_API_KEY = "jobboerse-jobsuche"
 # Detail page: the website uses the raw (un-encoded) reference number.
 # (Base64 encoding is only for the REST /jobdetails API endpoint, not the site.)
@@ -108,6 +113,27 @@ class BundesagenturProvider(JobProvider):
                 break
         log.info("Bundesagentur normalized %d postings (limit %d)", len(postings), limit)
         return postings
+
+    def fetch_description(self, refnr: str) -> str:
+        """Fetch the full job description for a reference number (on demand).
+
+        The v6 search response has no description, so we call the detail endpoint
+        (base64-encoded refnr) which returns 'stellenangebotsBeschreibung'.
+        Returns '' on any failure.
+        """
+        if not refnr:
+            return ""
+        code = base64.b64encode(refnr.encode("utf-8")).decode("ascii")
+        headers = {"X-API-Key": self.api_key, "User-Agent": _UA, "Accept": "application/json"}
+        try:
+            resp = httpx.get(DETAILS_URL.format(code=code), headers=headers, timeout=20)
+            if resp.status_code != 200:
+                log.info("Bundesagentur detail HTTP %s for %s", resp.status_code, refnr)
+                return ""
+            return (resp.json().get("stellenangebotsBeschreibung") or "").strip()
+        except Exception as e:
+            log.info("Bundesagentur detail fetch failed for %s: %s", refnr, e)
+            return ""
 
     def _normalize(self, item: dict) -> JobPosting:
         # Location comes from the first Stellenlokation's address.
