@@ -30,3 +30,11 @@ class JobProvider(abc.ABC):
     def is_configured(self) -> bool:
         """Whether the provider has the credentials/config it needs."""
         return True
+
+    def warnings(self) -> list[str]:
+        """User-facing warnings accumulated during a scan (e.g. rate limits).
+
+        Called by run_scan after querying so notable, non-fatal conditions can
+        be surfaced in the UI. Empty by default.
+        """
+        return []

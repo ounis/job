@@ -117,6 +117,7 @@ async def run_scan(force_profile: bool = False) -> dict:
     fetched = 0
     new_scored = 0
     skipped_seen = 0
+    warnings: list[str] = []
 
     for provider in providers:
         if not provider.is_configured():
@@ -144,6 +145,10 @@ async def run_scan(force_profile: bool = False) -> dict:
         postings = list(merged.values())
         log.info("Provider %r merged %d unique postings across %d location(s)",
                  provider.name, len(postings), len(locations))
+
+        # Surface any non-fatal provider warnings (e.g. JSearch rate limit) so
+        # the UI can tell the user results may be incomplete.
+        warnings.extend(provider.warnings())
 
         # Apply user exclusions (companies, locations, title/description
         # keywords, sources). Dropped jobs are neither scored nor stored.
@@ -207,6 +212,7 @@ async def run_scan(force_profile: bool = False) -> dict:
         "fetched": fetched,
         "new_scored": new_scored,
         "skipped_seen": skipped_seen,
+        "warnings": warnings,
     }
 
 

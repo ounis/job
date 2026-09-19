@@ -39,9 +39,28 @@ class JSearchProvider(JobProvider):
         settings = get_settings()
         self.api_key = settings.rapidapi_key
         self.max_pages = settings.jsearch_max_pages
+        # Effective queries already fetched during this scan. Several configured
+        # locations collapse to the same JSearch free-text query (e.g. "online"
+        # and "remote", or "deutschland" and "germany"), so we skip duplicates
+        # to avoid wasting the limited API quota (free tier is easily rate-
+        # limited to 429). One provider instance lives for one scan.
+        self._queried: set[str] = set()
+        # Set once the API returns 429 (quota/rate limit). Further queries this
+        # scan are skipped — retrying just wastes time and stays rate-limited.
+        self._rate_limited = False
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
+
+    def warnings(self) -> list[str]:
+        if self._rate_limited:
+            return [
+                "JSearch hit its rate limit (HTTP 429) during this scan, so some "
+                "locations were skipped. Results may be incomplete. Lower "
+                "JSEARCH_MAX_PAGES or the number of search locations, or upgrade "
+                "your RapidAPI plan."
+            ]
+        return []
 
     async def search(
         self,
@@ -52,6 +71,9 @@ class JSearchProvider(JobProvider):
         profile: CVProfile | None = None,
     ) -> list[JobPosting]:
         if not self.is_configured():
+            return []
+        if self._rate_limited:
+            log.info("Skipping JSearch query for %r — already rate-limited this scan", location)
             return []
 
         # JSearch takes a free-text query. Encode the location into the query
@@ -69,6 +91,13 @@ class JSearchProvider(JobProvider):
             query = f"{terms} remote in Germany"
         else:
             query = f"{terms} in {loc}, Germany"
+
+        # Skip a query we already ran this scan (multiple locations map to the
+        # same free-text query). Saves API calls and avoids 429 rate limits.
+        if query in self._queried:
+            log.info("Skipping duplicate JSearch query %r (location %r)", query, location)
+            return []
+        self._queried.add(query)
 
         num_pages = max(1, (limit + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE)
         # Clamp to the plan's page limit (free tier = 1) to avoid errors/quota
@@ -97,6 +126,16 @@ class JSearchProvider(JobProvider):
                 try:
                     resp = await client.get(API_URL, headers=headers, params=params)
                     log.info("JSearch HTTP %s (attempt %d)", resp.status_code, attempt)
+                    if resp.status_code == 429:
+                        # Rate limited / quota exhausted. Don't retry and don't
+                        # query further locations this scan; log cleanly.
+                        self._rate_limited = True
+                        log.warning(
+                            "JSearch rate-limited (HTTP 429) — skipping remaining "
+                            "queries this scan. Lower JSEARCH_MAX_PAGES / SEARCH_LOCATION "
+                            "count or upgrade the plan."
+                        )
+                        return []
                     resp.raise_for_status()
                     data = resp.json()
                     break

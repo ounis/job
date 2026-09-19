@@ -23,7 +23,7 @@
   </header>
 
   {% if flash %}
-  <div class="flash">{{ flash }}</div>
+  <div class="flash{{ ' flash-warn' if '⚠' in flash else '' }}">{{ flash }}</div>
   {% endif %}
 
   <main class="container">

@@ -171,6 +171,9 @@ async def scan(force_profile: bool = Form(False), cv: str = Form("")):
         f"skipped {summary['skipped_seen']} already-seen. "
         f"Keywords: {', '.join(summary['keywords']) or '(none)'}."
     )
+    warnings = summary.get("warnings") or []
+    if warnings:
+        msg = "⚠ " + " ".join(warnings) + " " + msg
     return _redirect_with_msg(msg)
 
 
