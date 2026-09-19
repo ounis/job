@@ -56,7 +56,10 @@ class JSearchProvider(JobProvider):
         # since it has no separate distance param.
         loc = location.strip()
         low = loc.lower()
-        terms = " ".join(keywords).strip() or "jobs"
+        # Use the PRIMARY keyword only. Joining all derived keywords into one
+        # long phrase makes JSearch's free-text match return nothing (it treats
+        # the whole string as one query). The first keyword is the main title.
+        terms = (keywords[0].strip() if keywords else "") or "jobs"
         if not loc or low in ("germany", "deutschland"):
             query = f"{terms} in Germany"
         elif low in ("remote", "remote work", "homeoffice", "home office", "online"):
