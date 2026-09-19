@@ -269,11 +269,18 @@ _SETTINGS_SPEC = [
         "desc": "Credentials for the AI and job-search services. Keys are stored"
                 " locally in your .env and never displayed after saving.",
         "fields": [
+            _f("AI_PROVIDER", "ai_provider", "select", "AI provider",
+               "openai = cloud (needs key); ollama = local, free, no key.",
+               options=["openai", "ollama"]),
             _f("OPENAI_API_KEY", "openai_api_key", "secret", "OpenAI API key",
-               "Enables AI CV parsing, scoring and tailored documents. Without "
-               "it, the app falls back to a free heuristic."),
+               "Used when AI provider is 'openai'. Without any AI, the app falls "
+               "back to a free heuristic."),
             _f("OPENAI_MODEL", "openai_model", "text", "OpenAI model",
-               "e.g. gpt-4o-mini (cheapest). Only used when a key is set."),
+               "e.g. gpt-4o-mini (cheapest). Used when provider is 'openai'."),
+            _f("OLLAMA_BASE_URL", "ollama_base_url", "text", "Ollama URL",
+               "Local Ollama server. Default http://localhost:11434/v1."),
+            _f("OLLAMA_MODEL", "ollama_model", "text", "Ollama model",
+               "Must be pulled first (e.g. `ollama pull llama3.1`)."),
             _f("RAPIDAPI_KEY", "rapidapi_key", "secret", "RapidAPI key (JSearch)",
                "The main job source. Free tier available on RapidAPI."),
             _f("ADZUNA_APP_ID", "adzuna_app_id", "text", "Adzuna app id",
