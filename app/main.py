@@ -80,14 +80,14 @@ async def _serialize_actions(request: Request, call_next):
         # Another action is running — reject this one rather than run in parallel.
         ref = request.headers.get("referer", "")
         target = "/"
-        from urllib.parse import urlsplit as _urlsplit
         if ref:
-            p = _urlsplit(ref).path
+            p = urllib.parse.urlsplit(ref).path
             if p.startswith("/") and not p.startswith("//"):
                 target = p
-        sep = "&" if "?" in target else "?"
-        msg = urllib.parse.quote("An action is already in progress — please wait.")
-        return RedirectResponse(url=f"{target}{sep}msg={msg}", status_code=303)
+        return _flash_cookie(
+            RedirectResponse(url=target, status_code=303),
+            "An action is already in progress — please wait.",
+        )
 
     _action_in_progress = True
     try:
@@ -124,7 +124,7 @@ def dashboard(request: Request):
         for p in discover_cv_files()
     ]
 
-    return templates.TemplateResponse(
+    resp = templates.TemplateResponse(
         request,
         "dashboard.html",
         {
@@ -138,9 +138,11 @@ def dashboard(request: Request):
             "ai_enabled": settings.ai_enabled,
             "detected_cvs": detected_cvs,
             "active_cv_name": active_cv.name if active_cv.exists() else None,
-            "flash": request.query_params.get("msg"),
+            "flash": _take_flash(request),
         },
     )
+    _clear_flash(resp)
+    return resp
 
 
 @app.post("/scan")
@@ -392,11 +394,12 @@ def settings_page(request: Request):
         "providers": s.provider_list,
         "active_cv": s.cv_full_path.name if s.cv_full_path.exists() else None,
     }
-    return templates.TemplateResponse(
+    resp = templates.TemplateResponse(
         request, "settings.html",
-        {"groups": groups, "status": status,
-         "flash": request.query_params.get("msg")},
+        {"groups": groups, "status": status, "flash": _take_flash(request)},
     )
+    _clear_flash(resp)
+    return resp
 
 
 @app.post("/settings")
@@ -439,11 +442,13 @@ async def save_settings(request: Request):
 @app.get("/ignored", response_class=HTMLResponse)
 def ignored_page(request: Request):
     ignored = db.list_jobs(statuses=[JobStatus.IGNORED])
-    return templates.TemplateResponse(
+    resp = templates.TemplateResponse(
         request,
         "ignored.html",
-        {"ignored": ignored, "flash": request.query_params.get("msg")},
+        {"ignored": ignored, "flash": _take_flash(request)},
     )
+    _clear_flash(resp)
+    return resp
 
 
 @app.post("/jobs/clear")
@@ -517,7 +522,7 @@ def calendar_page(request: Request):
         rows = [r for r in rows if (r["event"].starts_at or "")[:19] < now19]
         rows.reverse()
 
-    return templates.TemplateResponse(
+    resp = templates.TemplateResponse(
         request, "calendar.html",
         {
             "rows": rows,
@@ -528,9 +533,11 @@ def calendar_page(request: Request):
             "sel_statuses": [s.value for s in sel_statuses],
             "sel_types": [t.value for t in sel_types],
             "when": when,
-            "flash": qp.get("msg"),
+            "flash": _take_flash(request),
         },
     )
+    _clear_flash(resp)
+    return resp
 
 
 def _ics_response(ics: str, filename: str) -> Response:
@@ -672,7 +679,7 @@ def job_detail(request: Request, key: str):
     application = db.get_application(key)
     events = services.split_events(db.list_events_for_job(key))
     notes = db.list_notes_for_job(key)
-    return templates.TemplateResponse(
+    resp = templates.TemplateResponse(
         request,
         "job_detail.html",
         {
@@ -684,8 +691,11 @@ def job_detail(request: Request, key: str):
             "status_labels": STATUS_LABELS,
             "event_types": list(EventType),
             "event_type_labels": EVENT_TYPE_LABELS,
+            "flash": _take_flash(request),
         },
     )
+    _clear_flash(resp)
+    return resp
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -705,11 +715,28 @@ def download(name: str):
     return FileResponse(path, filename=path.name, media_type="application/pdf")
 
 
-def _redirect_with_msg(msg: str, target: str = "/") -> RedirectResponse:
-    sep = "&" if "?" in target else "?"
-    return RedirectResponse(
-        url=f"{target}{sep}msg={urllib.parse.quote(msg)}", status_code=303
+def _take_flash(request: Request) -> str | None:
+    """Read the one-time flash message from the cookie (URL-decoded)."""
+    raw = request.cookies.get("flash")
+    return urllib.parse.unquote(raw) if raw else None
+
+
+def _clear_flash(response) -> None:
+    """Delete the flash cookie so the message shows exactly once."""
+    response.delete_cookie("flash")
+
+
+def _flash_cookie(resp: RedirectResponse, msg: str) -> RedirectResponse:
+    # Carry the flash message in a short-lived cookie instead of a ?msg= query
+    # param, so redirect URLs stay clean. Read + cleared on the next page.
+    resp.set_cookie(
+        "flash", urllib.parse.quote(msg), max_age=30, httponly=False, samesite="lax"
     )
+    return resp
+
+
+def _redirect_with_msg(msg: str, target: str = "/") -> RedirectResponse:
+    return _flash_cookie(RedirectResponse(url=target, status_code=303), msg)
 
 
 def _redirect_back(request: Request, msg: str) -> RedirectResponse:
@@ -721,10 +748,13 @@ def _redirect_back(request: Request, msg: str) -> RedirectResponse:
     ref = request.headers.get("referer", "")
     target = "/"
     if ref:
-        path = urllib.parse.urlsplit(ref).path
-        if path.startswith("/") and not path.startswith("//"):
-            target = path
-    sep = "&" if "?" in target else "?"
-    return RedirectResponse(
-        url=f"{target}{sep}msg={urllib.parse.quote(msg)}", status_code=303
-    )
+        # Preserve the full referer (path + query) so filters/pages persist,
+        # but strip any stale ?msg= from older links.
+        parts = urllib.parse.urlsplit(ref)
+        if parts.path.startswith("/") and not parts.path.startswith("//"):
+            q = "&".join(
+                kv for kv in parts.query.split("&")
+                if kv and not kv.startswith("msg=")
+            )
+            target = parts.path + (f"?{q}" if q else "")
+    return _flash_cookie(RedirectResponse(url=target, status_code=303), msg)

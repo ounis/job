@@ -19,8 +19,6 @@ value.
 """
 from __future__ import annotations
 
-import base64
-
 import httpx
 
 from ..config import get_settings
@@ -33,8 +31,9 @@ log = get_logger("app.providers.bundesagentur")
 BASE = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service"
 API_URL = f"{BASE}/pc/v6/jobs"
 DEFAULT_API_KEY = "jobboerse-jobsuche"
-# Detail page: the site expects the base64-encoded reference number.
-DETAIL_URL = "https://www.arbeitsagentur.de/jobsuche/jobdetail/{code}"
+# Detail page: the website uses the raw (un-encoded) reference number.
+# (Base64 encoding is only for the REST /jobdetails API endpoint, not the site.)
+DETAIL_URL = "https://www.arbeitsagentur.de/jobsuche/jobdetail/{refnr}"
 # A browser-like UA; the agency's edge rejects default python-httpx UAs.
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -119,12 +118,12 @@ class BundesagenturProvider(JobProvider):
         location = ", ".join(p for p in (city, region) if p) or "Deutschland"
 
         refnr = item.get("referenznummer") or ""
-        # Detail page uses the base64-encoded reference number.
+        # externeUrl (employer's own posting) wins; otherwise link to the
+        # agency detail page using the raw reference number.
         if item.get("externeUrl"):
             url = item["externeUrl"]
         elif refnr:
-            code = base64.b64encode(refnr.encode("utf-8")).decode("ascii")
-            url = DETAIL_URL.format(code=code)
+            url = DETAIL_URL.format(refnr=refnr)
         else:
             url = ""
 
