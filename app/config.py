@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # Bundesagentur (German Federal Employment Agency) — public client id by
     # default; the API is geo-restricted to Germany/EU.
     bundesagentur_api_key: str = ""
+    # AI web-search provider: Serper (google.serper.dev) returns clean SERP
+    # JSON; the AI then structures the organic results into job postings. Free
+    # signup grants a one-time credit allowance (no card). Empty = disabled.
+    serper_api_key: str = ""
+    # How many SERP results to feed the AI per query (kept small — each scan
+    # runs one query per location and one AI structuring call).
+    ai_web_results: int = 10
     active_providers: str = "jsearch"
 
     # Search

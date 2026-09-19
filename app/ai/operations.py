@@ -340,6 +340,102 @@ def _gaps_fallback(profile: CVProfile, job: JobPosting) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------
+# Web-search result structuring (for the ai_web provider)
+# ----------------------------------------------------------------------------
+_WEB_STRUCTURE_SYSTEM = """You extract structured job postings from web search
+results. You are given a list of search results (title, link, snippet) from a
+job search. Your ONLY job is to normalize the ones that are genuine individual
+job postings into structured records. Rules:
+  - Use ONLY the information present in the given results. NEVER invent a
+    company, title, location, URL, or any other detail. If a field is unknown,
+    use an empty string.
+  - Keep the link EXACTLY as given — do not alter or fabricate URLs.
+  - Skip results that are not a specific job posting (e.g. category/search
+    pages, company home pages, articles, "jobs in X" list pages).
+Respond with JSON:
+  { "jobs": [ {"title": "...", "company": "...", "location": "...",
+               "url": "...", "description": "..."} ] }
+Set description to the snippet text. Return an empty list if none qualify."""
+
+
+def structure_job_results(results: list[dict], location_hint: str = "") -> list[dict]:
+    """Turn raw web-search results into normalized job dicts using AI.
+
+    `results` is a list of {title, link, snippet}. Returns a list of dicts with
+    keys title/company/location/url/description. The AI only reshapes the given
+    data — it never invents postings. Falls back to a deterministic mapping of
+    the raw results when AI is unavailable or fails.
+    """
+    settings = get_settings()
+    clean = [r for r in results if isinstance(r, dict) and (r.get("link") or "").strip()]
+    if not clean:
+        return []
+    if not settings.ai_enabled:
+        return _structure_results_fallback(clean, location_hint)
+
+    lines = []
+    for i, r in enumerate(clean, 1):
+        lines.append(
+            f"{i}. TITLE: {r.get('title', '')}\n"
+            f"   LINK: {r.get('link', '')}\n"
+            f"   SNIPPET: {r.get('snippet', '')}"
+        )
+    hint = f"\nMost results should be located in/around: {location_hint}." if location_hint else ""
+    user = "SEARCH RESULTS:\n" + "\n".join(lines) + hint
+
+    try:
+        data = get_ai_client().complete_json(_WEB_STRUCTURE_SYSTEM, user)
+    except Exception as e:
+        log.warning("AI web-result structuring failed (%s); using raw fallback", _brief(e))
+        return _structure_results_fallback(clean, location_hint)
+
+    valid_links = {(r.get("link") or "").strip() for r in clean}
+    jobs = data.get("jobs") or []
+    out: list[dict] = []
+    for j in jobs:
+        if not isinstance(j, dict):
+            continue
+        url = (j.get("url") or "").strip()
+        # Guard against hallucinated URLs: only accept links the AI was shown.
+        if url not in valid_links:
+            continue
+        title = (j.get("title") or "").strip()
+        if not title:
+            continue
+        out.append({
+            "title": title,
+            "company": (j.get("company") or "").strip(),
+            "location": (j.get("location") or "").strip(),
+            "url": url,
+            "description": (j.get("description") or "").strip(),
+        })
+    # If the model returned nothing usable, don't lose the real results.
+    return out or _structure_results_fallback(clean, location_hint)
+
+
+def _structure_results_fallback(results: list[dict], location_hint: str = "") -> list[dict]:
+    """Deterministic mapping of raw search results to job dicts (no AI).
+
+    Uses the search-result title/link/snippet directly. Company is left blank
+    (unknown from a bare SERP result); the snippet becomes the description.
+    """
+    out: list[dict] = []
+    for r in results:
+        title = (r.get("title") or "").strip()
+        url = (r.get("link") or "").strip()
+        if not title or not url:
+            continue
+        out.append({
+            "title": title,
+            "company": "",
+            "location": location_hint,
+            "url": url,
+            "description": (r.get("snippet") or "").strip(),
+        })
+    return out
+
+
+# ----------------------------------------------------------------------------
 # Tailored document generation (requires AI)
 # ----------------------------------------------------------------------------
 # Supported output languages for generated documents. German is the default.

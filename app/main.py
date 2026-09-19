@@ -292,6 +292,10 @@ _SETTINGS_SPEC = [
                "Optional second job source (free)."),
             _f("ADZUNA_APP_KEY", "adzuna_app_key", "secret", "Adzuna app key",
                "Optional, pairs with the Adzuna app id."),
+            _f("SERPER_API_KEY", "serper_api_key", "secret", "Serper key (AI web search)",
+               "Enables the 'AI web search' source: real Google results are "
+               "structured into postings by AI. Free signup at serper.dev "
+               "(no card). Unaffected by JSearch limits."),
             _f("ACTIVE_PROVIDERS", "active_providers", "providers", "Active job sources",
                "Which sources to query. Results merge + de-duplicate.",
                options=[
@@ -299,9 +303,12 @@ _SETTINGS_SPEC = [
                    {"value": "adzuna", "label": "Adzuna", "available": True},
                    {"value": "bundesagentur", "label": "Bundesagentur (Germany-only API)",
                     "available": True},
+                   {"value": "ai_web", "label": "AI web search (Serper)", "available": True},
                ]),
             _f("JSEARCH_MAX_PAGES", "jsearch_max_pages", "int", "JSearch pages per scan",
                "~10 results per page. Free tier allows 1.", min=1, max=20),
+            _f("AI_WEB_RESULTS", "ai_web_results", "int", "AI web results per query",
+               "How many search results to structure per location.", min=1, max=20),
         ],
     },
     {

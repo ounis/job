@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ..config import get_settings
 from .adzuna import AdzunaProvider
+from .ai_web import AIWebProvider
 from .base import JobProvider
 from .bundesagentur import BundesagenturProvider
 from .jsearch import JSearchProvider
@@ -16,6 +17,7 @@ _REGISTRY = {
     "jsearch": JSearchProvider,
     "adzuna": AdzunaProvider,
     "bundesagentur": BundesagenturProvider,
+    "ai_web": AIWebProvider,
 }
 
 
