@@ -82,6 +82,38 @@
   </div>
 </section>
 
+<section class="panel">
+  <div class="panel-head">
+    <h2>Gaps &amp; concerns <span class="muted">(where your CV may not match)</span></h2>
+    <form method="post" action="/jobs/{{ job.posting.key }}/analyze" style="display:inline">
+      <button class="btn btn-outline small">Re-analyze</button>
+    </form>
+  </div>
+  {% if gaps_ready %}
+    {% if gaps %}
+    <ul class="gaps-list">
+      {% for g in gaps %}
+      <li class="gap-item">
+        <span class="gap-point">{{ g.point }}</span>
+        {% if g.detail %}<span class="gap-detail muted"> — {{ g.detail }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted small">
+      These are potential concerns to address in your letter or interview — an
+      honest read of the posting vs. your CV.
+    </p>
+    {% else %}
+    <p class="muted">No significant gaps found — you look like a strong match.</p>
+    {% endif %}
+  {% else %}
+  <p class="muted">
+    The gap analysis is generated when you prepare an application for this job.
+    Prepare it, or click <strong>Re-analyze</strong> to run it now.
+  </p>
+  {% endif %}
+</section>
+
 {% if application %}
 <section class="panel">
   <h2>Prepared documents <span class="muted">(review before submitting)</span></h2>

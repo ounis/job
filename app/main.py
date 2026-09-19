@@ -497,6 +497,12 @@ def delete_event_route(key: str, event_id: int, request: Request):
     return _redirect_back(request, "Event removed.")
 
 
+@app.post("/jobs/{key:path}/analyze")
+def analyze_gaps_route(key: str, request: Request):
+    services.get_job_gaps(key, refresh=True)
+    return _redirect_back(request, "Gap analysis updated.")
+
+
 @app.post("/jobs/{key:path}/instructions")
 def save_job_instructions(key: str, request: Request, instructions: str = Form("")):
     services.set_job_instructions(key, instructions)
@@ -710,6 +716,8 @@ def job_detail(request: Request, key: str):
             "letter_html": _format_document(application["motivation_letter"]) if application else "",
             "description_html": _format_description(job.posting.description),
             "job_instructions": db.get_job_instructions(key),
+            "gaps": _cached_gaps(key),
+            "gaps_ready": bool(db.get_kv(f"gaps:{key}", "")),
             "events": events,
             "notes": notes,
             "statuses": list(JobStatus),
@@ -792,6 +800,18 @@ def _format_description(text: str) -> str:
         if rest:
             out.append("<p>" + "<br>".join(_inline_md(l) for l in rest) + "</p>")
     return "".join(out)
+
+
+def _cached_gaps(key: str) -> list:
+    """Return cached gap analysis for a job (empty if not computed yet)."""
+    import json
+    raw = db.get_kv(f"gaps:{key}", "")
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return []
 
 
 def _format_cv_html(stored: str) -> str:

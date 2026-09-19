@@ -276,6 +276,16 @@ def prepare_application(key: str, language: str = "de") -> dict:
     # Store the CV HTML (for the web preview) as the generated_cv field.
     cv_text = cv_html
 
+    # Compute the CV-vs-job gap analysis now (AI is already engaged) so it's
+    # ready on the job page without a separate click. Cached in kv.
+    try:
+        import json as _json
+        gaps = ai_ops.analyze_gaps(profile, posting)
+        db.set_kv(f"gaps:{key}", _json.dumps(gaps))
+        log.info("Gap analysis: %d concern(s) for %s", len(gaps), key)
+    except Exception as e:
+        log.warning("Gap analysis failed for %s: %s", key, e)
+
     payload = {
         "job_key": key,
         "job_title": posting.title,
@@ -342,6 +352,32 @@ def fetch_bundesagentur_description(refnr: str) -> str:
     """Fetch a Bundesagentur job's full description on demand."""
     from .providers.bundesagentur import BundesagenturProvider
     return BundesagenturProvider().fetch_description(refnr)
+
+
+def get_job_gaps(key: str, refresh: bool = False) -> list[dict]:
+    """Return the CV-vs-job gap analysis for a job, computed lazily and cached.
+
+    Cached in the kv table (JSON) keyed by the job so repeated views don't
+    re-run the AI. Pass refresh=True to recompute.
+    """
+    import json as _json
+    cache_key = f"gaps:{key}"
+    if not refresh:
+        cached = db.get_kv(cache_key, "")
+        if cached:
+            try:
+                return _json.loads(cached)
+            except (ValueError, TypeError):
+                pass
+    job = db.get_job(key)
+    if job is None:
+        return []
+    profile = db.load_profile()
+    if profile is None:
+        return []
+    gaps = ai_ops.analyze_gaps(profile, job.posting)
+    db.set_kv(cache_key, _json.dumps(gaps))
+    return gaps
 
 
 def forget_job(key: str) -> bool:

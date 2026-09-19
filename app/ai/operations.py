@@ -271,6 +271,75 @@ def _score_fallback(profile: CVProfile, job: JobPosting) -> RelevanceResult:
 
 
 # ----------------------------------------------------------------------------
+# Gap analysis — where the CV does NOT match the posting
+# ----------------------------------------------------------------------------
+_GAPS_SYSTEM = """You are a critical but fair recruiter. Compare the candidate's
+CV to the job posting and list the CONCERNS — requirements or expectations in the
+posting that the candidate does NOT clearly meet (missing skills, insufficient
+years, seniority mismatch, missing domain/industry, language or location issues,
+missing certifications/degrees, etc.). Be specific and honest — do not invent
+strengths. Respond with JSON:
+  { "gaps": [ {"point": "<the requirement>", "detail": "<why it's a concern>"} ] }
+List the most important 3-6 gaps. If the candidate is a strong match with no real
+concerns, return an empty list."""
+
+
+def analyze_gaps(profile: CVProfile, job: JobPosting) -> list[dict]:
+    """Return a list of {point, detail} concerns where the CV misses the job.
+
+    Uses AI when available; otherwise a heuristic from missing skills + seniority.
+    """
+    settings = get_settings()
+    if not settings.ai_enabled:
+        return _gaps_fallback(profile, job)
+
+    user = (
+        f"CANDIDATE:\n"
+        f"Seniority: {profile.seniority.value}\n"
+        f"Years: {profile.years_experience}\n"
+        f"Titles: {', '.join(profile.titles)}\n"
+        f"Skills: {', '.join(profile.skills)}\n"
+        f"Languages: {', '.join(profile.languages)}\n"
+        f"CV:\n{profile.raw_text[:settings.ai_gen_cv_chars]}\n\n"
+        f"JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
+        f"Location: {job.location}\n"
+        f"Description: {job.description[:settings.ai_score_desc_chars]}"
+    )
+    try:
+        data = get_ai_client().complete_json(_GAPS_SYSTEM, user)
+    except Exception as e:
+        log.warning("AI gap analysis failed (%s); using heuristic", _brief(e))
+        return _gaps_fallback(profile, job)
+    gaps = data.get("gaps") or []
+    out = []
+    for g in gaps:
+        if isinstance(g, dict) and g.get("point"):
+            out.append({"point": str(g["point"]), "detail": str(g.get("detail", ""))})
+        elif isinstance(g, str) and g.strip():
+            out.append({"point": g.strip(), "detail": ""})
+    return out[:6]
+
+
+def _gaps_fallback(profile: CVProfile, job: JobPosting) -> list[dict]:
+    """Heuristic gaps: job-description keywords/skills not found in the CV."""
+    cv_text = (profile.raw_text or "").lower()
+    desc = f"{job.title} {job.description}".lower()
+    gaps: list[dict] = []
+    # Common skills mentioned in the job but absent from the CV. Match on word
+    # boundaries so short skills (c, go, ml) don't false-match inside words.
+    for skill in sorted(_COMMON_SKILLS):
+        pat = r"(?<![a-z0-9+#.])" + re.escape(skill) + r"(?![a-z0-9+#.])"
+        if re.search(pat, desc) and not re.search(pat, cv_text):
+            gaps.append({
+                "point": skill,
+                "detail": "Mentioned in the posting but not found in your CV.",
+            })
+        if len(gaps) >= 6:
+            break
+    return gaps
+
+
+# ----------------------------------------------------------------------------
 # Tailored document generation (requires AI)
 # ----------------------------------------------------------------------------
 # Supported output languages for generated documents. German is the default.
@@ -312,8 +381,55 @@ def _strip_preamble(text: str) -> str:
         # Also drop a blank line left after removing the intro.
         while rest and not rest[0].strip():
             rest.pop(0)
-        return "\n".join(rest).strip()
+        return _strip_trailing_note("\n".join(rest).strip())
+    return _strip_trailing_note(text.strip())
+
+
+# Trailing meta-commentary the model sometimes appends, e.g.
+# "Note: I've added the requested information ..." or "I have included ...".
+_TRAILING_NOTE_RE = re.compile(
+    r"^\s*(note\s*:|nb\s*:|hinweis\s*:|i'?ve\s|i have\s|please note|as requested|"
+    r"i added|i included|i have included|let me know)",
+    re.IGNORECASE,
+)
+
+
+def _strip_trailing_note(text: str) -> str:
+    """Remove a trailing meta-note paragraph the model appended after the doc.
+
+    Works on plain text: if the LAST paragraph (or last line) looks like a
+    meta-comment about what the model did, drop it.
+    """
+    if not text:
+        return text
+    blocks = re.split(r"\n\s*\n", text.rstrip())
+    if blocks and _TRAILING_NOTE_RE.match(blocks[-1].strip()):
+        blocks.pop()
+        return "\n\n".join(blocks).strip()
+    # Also handle a single trailing line (no blank separator).
+    lines = text.rstrip().split("\n")
+    if len(lines) > 1 and _TRAILING_NOTE_RE.match(lines[-1].strip()):
+        return "\n".join(lines[:-1]).strip()
     return text.strip()
+
+
+def _strip_note_html(html: str) -> str:
+    """Remove a trailing <p>Note: ...</p> meta-comment from CV body HTML."""
+    if not html:
+        return html
+    # Case A: a trailing meta-note paragraph. Capture only the LAST <p>...</p>.
+    m = re.search(r"(?is)<p[^>]*>((?:(?!</p>).)*)</p>\s*$", html)
+    if m and _TRAILING_NOTE_RE.match(re.sub(r"<[^>]+>", "", m.group(1)).strip()):
+        return html[: m.start()].rstrip()
+    # Case B: a trailing BARE-text note after the last closing tag (no wrapper),
+    # e.g. "...</p>\n\nNote: I've added ...". Only match when it follows a
+    # closing '>' + whitespace, so it can't cut inside an opening <p>Note:...>.
+    tail = re.search(
+        r"(?is)>\s+((?:note\s*:|nb\s*:|hinweis\s*:|i'?ve\s|i have\s).*)$", html
+    )
+    if tail and _TRAILING_NOTE_RE.match(tail.group(1).strip()):
+        return html[: tail.start(1)].rstrip()
+    return html
 
 
 _CV_SYSTEM = """You are an expert resume writer. Rewrite the candidate's CV to
@@ -379,7 +495,8 @@ Do NOT include <html>, <head>, <body>, <style>, images, classes or attributes.
 Do NOT include the candidate's name/contact header (added separately).
 CRITICAL: Write ALL text ENTIRELY in {lang} — section titles and content alike.
 Do NOT mix languages regardless of the CV's or job posting's language.
-Output ONLY the HTML — no preamble, no code fences."""
+Output ONLY the HTML — no preamble, no code fences, and NO trailing note or
+commentary about what you changed (e.g. do not add "Note: I added ...")."""
 
 
 def _instructions_block(extra: str) -> str:
@@ -418,7 +535,7 @@ def generate_cv_html(
     )
     try:
         html = get_ai_client().complete_text(_CV_HTML_SYSTEM.format(lang=lang), user)
-        return _sanitize_cv_html(_strip_preamble(html)), True
+        return _strip_note_html(_sanitize_cv_html(_strip_preamble(html))), True
     except Exception as e:
         log.warning("generate_cv_html: AI failed (%s) — using non-AI fallback", _brief(e))
         text, _ = generate_cv(profile, job, language)
