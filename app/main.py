@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import re
 import urllib.parse
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -33,8 +34,10 @@ from .ics import build_ics
 from pathlib import Path
 
 from .config import (
+    DATA_DIR,
     GENERATED_DIR,
     STATIC_DIR,
+    SUPPORTED_CV_SUFFIXES,
     TEMPLATES_DIR,
     discover_cv_files,
     get_settings,
@@ -259,6 +262,58 @@ def select_cv(cv: str = Form(...)):
         log.warning("CV switch: profile parse failed: %s", e)
         return _redirect_with_msg(
             f"Active CV set to {choice.name}. Run a scan (with 're-parse CV') to use it."
+        )
+
+
+@app.post("/cv/upload")
+async def upload_cv(cv_file: UploadFile = File(...)):
+    """Accept a CV file from the browser, store it in data/, make it active.
+
+    Saves into DATA_DIR (where discovery looks), sets it as the active CV, and
+    re-parses the profile — so an uploaded CV is usable immediately, no shell
+    access needed (important for the headless Pi).
+    """
+    raw_name = cv_file.filename or ""
+    # Keep only the basename and a safe set of characters so an upload can't
+    # write outside data/ (path traversal) or use odd filenames.
+    base = Path(raw_name).name
+    suffix = Path(base).suffix.lower()
+    if suffix not in SUPPORTED_CV_SUFFIXES:
+        allowed = ", ".join(SUPPORTED_CV_SUFFIXES)
+        return _redirect_with_msg(
+            f"Unsupported file type '{suffix or '(none)'}'. Allowed: {allowed}."
+        )
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(base).stem)[:80] or "cv"
+    dest = (DATA_DIR / f"{safe}{suffix}").resolve()
+    # Final guard: the resolved destination must stay inside DATA_DIR.
+    if DATA_DIR.resolve() not in dest.parents:
+        return _redirect_with_msg("Invalid upload destination.")
+
+    try:
+        data = await cv_file.read()
+        if not data:
+            return _redirect_with_msg("The uploaded file is empty.")
+        # Guard against runaway uploads (CVs are small; cap at 15 MB).
+        if len(data) > 15 * 1024 * 1024:
+            return _redirect_with_msg("File too large (max 15 MB).")
+        dest.write_bytes(data)
+    except Exception as e:
+        log.warning("CV upload failed: %s", e)
+        return _redirect_with_msg(f"Upload failed: {type(e).__name__}.")
+    finally:
+        await cv_file.close()
+
+    set_cv_path(dest)
+    log.info("CV uploaded and set active: %s (%d bytes)", dest.name, len(data))
+    try:
+        services.ensure_profile(force=True)
+        return _redirect_with_msg(
+            f"Uploaded {dest.name} and parsed your profile. Run a scan for fresh matches."
+        )
+    except Exception as e:
+        log.warning("CV upload: profile parse failed: %s", e)
+        return _redirect_with_msg(
+            f"Uploaded {dest.name}. Run a scan (with 're-parse CV') to use it."
         )
 
 
