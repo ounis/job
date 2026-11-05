@@ -15,9 +15,14 @@ import webbrowser
 
 import uvicorn
 
-HOST = "127.0.0.1"
-PORT = 8000
-URL = f"http://{HOST}:{PORT}"
+# Host/port are overridable via env so the same entry point works for the local
+# Windows exe (localhost) and a headless server like the Pi (HOST=0.0.0.0 to be
+# reachable on the LAN). Defaults keep the exe's original localhost behavior.
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = int(os.getenv("PORT", "8000"))
+# The browser we auto-open (exe only) should always point at a reachable address,
+# never 0.0.0.0.
+URL = f"http://{'127.0.0.1' if HOST in ('0.0.0.0', '::') else HOST}:{PORT}"
 
 
 def _open_browser() -> None:

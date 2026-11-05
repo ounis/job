@@ -1,0 +1,20 @@
+[Unit]
+Description=Job Hunter web app
+# Start after the network is up and after the boot-time update has finished.
+Wants=network-online.target job-hunter-update.service
+After=network-online.target job-hunter-update.service ollama.service
+
+[Service]
+Type=simple
+# These are replaced by deploy/setup.sh with the real user/paths at install time.
+User=__USER__
+WorkingDirectory=__APP_DIR__
+# Listen on all interfaces so the UI is reachable from the LAN (phone/laptop).
+Environment=HOST=0.0.0.0
+Environment=PORT=8000
+ExecStart=__APP_DIR__/.venv/bin/python __APP_DIR__/run.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

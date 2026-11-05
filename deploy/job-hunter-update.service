@@ -1,0 +1,18 @@
+[Unit]
+Description=Job Hunter boot-time self-update (OS + app + Ollama)
+Wants=network-online.target
+After=network-online.target
+# This runs before the app service (which has After=job-hunter-update.service).
+
+[Service]
+Type=oneshot
+User=root
+# Don't let a slow/failed update block boot forever.
+TimeoutStartSec=900
+ExecStart=__APP_DIR__/deploy/update.sh
+# If the update fails (e.g. no internet after a move), carry on and start the
+# app anyway with whatever is already installed.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target
