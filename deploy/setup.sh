@@ -47,7 +47,33 @@ if command -v ollama >/dev/null 2>&1; then
 else
   curl -fsSL https://ollama.com/install.sh | sh
 fi
-# The Ollama installer sets up and enables its own systemd service (ollama.service).
+# The Ollama installer USUALLY creates ollama.service, but on some images (seen on
+# Debian 13 / Pi OS trixie) it does not. Create it ourselves if missing so the
+# model server reliably runs on boot.
+if ! systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+  echo "Creating ollama.service (installer did not)."
+  id ollama >/dev/null 2>&1 || useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+  usermod -a -G ollama "$APP_USER" 2>/dev/null || true
+  cat >/etc/systemd/system/ollama.service <<'OLLAMA'
+[Unit]
+Description=Ollama Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment=HOME=/usr/share/ollama
+Environment=OLLAMA_HOST=0.0.0.0:11434
+
+[Install]
+WantedBy=multi-user.target
+OLLAMA
+  systemctl daemon-reload
+fi
 systemctl enable --now ollama.service 2>/dev/null || true
 
 log "Pulling Ollama model: $OLLAMA_MODEL (this can take a while)"
@@ -83,20 +109,31 @@ EOF
 
 log "Installing systemd services"
 # Substitute the real user/paths into the unit templates, then install them.
-for unit in job-hunter.service job-hunter-update.service; do
+for unit in job-hunter.service job-hunter-update.service wifi-fallback.service; do
   sed -e "s#__APP_DIR__#$APP_DIR#g" \
       -e "s#__USER__#$APP_USER#g" \
       "$APP_DIR/deploy/$unit" > "/etc/systemd/system/$unit"
 done
 # Make the scripts executable.
-chmod +x "$APP_DIR/deploy/update.sh"
+chmod +x "$APP_DIR/deploy/update.sh" "$APP_DIR/deploy/wifi-fallback.sh"
+
+# Seed the WiFi-fallback hotspot config (editable later).
+if [ ! -f /etc/default/job-hunter-wifi ]; then
+  cat >/etc/default/job-hunter-wifi <<EOF
+# WiFi fallback hotspot (deploy/wifi-fallback.sh). Edit + reboot to apply.
+HOTSPOT_SSID=JobHunter-Setup
+HOTSPOT_PASSWORD=jobhunter
+WIFI_DEV=wlan0
+WAIT_SECS=60
+EOF
+fi
 
 # Apply the configured port to the app service.
 sed -i "s/^Environment=PORT=.*/Environment=PORT=$APP_PORT/" \
   /etc/systemd/system/job-hunter.service
 
 systemctl daemon-reload
-systemctl enable job-hunter-update.service job-hunter.service
+systemctl enable job-hunter-update.service job-hunter.service wifi-fallback.service
 systemctl restart job-hunter.service
 
 # Figure out the LAN IP for the closing message.

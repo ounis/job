@@ -1,0 +1,16 @@
+[Unit]
+Description=Job Hunter WiFi fallback hotspot (AP when no known WiFi)
+# Run after NetworkManager is up so nmcli works and auto-connect has had a go.
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=simple
+# Needs root to manage NetworkManager connections / bring up the AP.
+User=root
+ExecStart=__APP_DIR__/deploy/wifi-fallback.sh
+# If it exits (e.g. connected to a known net), that's success — don't respawn.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

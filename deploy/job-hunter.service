@@ -1,8 +1,10 @@
 [Unit]
 Description=Job Hunter web app
-# Start after the network is up and after the boot-time update has finished.
-Wants=network-online.target job-hunter-update.service
-After=network-online.target job-hunter-update.service ollama.service
+# Start after the network + Ollama. NOT ordered after the update service on
+# purpose: a slow/failed boot-time update must never block the app from starting.
+# (job-hunter-update runs independently at boot via its own WantedBy.)
+Wants=network-online.target
+After=network-online.target ollama.service
 
 [Service]
 Type=simple
