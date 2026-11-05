@@ -15,3 +15,7 @@ data/*.jpeg
 data/*.png
 !data/favicon.ico
 !data/.gitkeep
+
+# Personal Kiro steering notes — local-only, not for the public repo.
+# (Other .kiro/ content like shared steering/hooks can still be committed.)
+.kiro/steering/personal/
