@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}WiFi — Job Hunter{% endblock %}
+{% block content %}
+
+<div class="settings-head">
+  <a href="/" class="muted back-link">&larr; Dashboard</a>
+  <h1>WiFi setup</h1>
+  <div class="settings-status">
+    {% if not status.available %}
+    <span class="chip chip-off">Unavailable on this host</span>
+    {% elif status.connected_ssid %}
+    <span class="chip chip-on">Connected: {{ status.connected_ssid }}</span>
+    {% if status.ip_address %}<span class="chip">IP: {{ status.ip_address }}</span>{% endif %}
+    {% else %}
+    <span class="chip chip-off">Not connected</span>
+    {% endif %}
+  </div>
+  <p class="muted small">
+    Change the network this device joins — useful after moving the device to a
+    new location. Connecting here persists the network, so it reconnects on reboot.
+  </p>
+</div>
+
+{% if not status.available %}
+<div class="warn">
+  {{ status.message }}
+  <p class="muted small" style="margin:.5rem 0 0">
+    This page manages WiFi through NetworkManager (<code>nmcli</code>), which runs
+    on the device (e.g. the Raspberry Pi). On a machine without it, WiFi can't be
+    managed from here.
+  </p>
+</div>
+{% else %}
+
+<div class="settings-card">
+  <div class="settings-card-head">
+    <h2>Available networks</h2>
+    <p class="muted small">
+      {% if not status.radio_on %}The WiFi radio appears to be off. {% endif %}
+      Pick a network and enter its password to connect.
+    </p>
+  </div>
+
+  <form method="get" action="/wifi" style="margin:0 0 1rem">
+    <input type="hidden" name="scan" value="1" />
+    <button class="btn btn-outline small" type="submit">Scan for networks</button>
+  </form>
+
+  {% if scanned and not networks %}
+  <p class="muted">No networks found. Try scanning again, or enter an SSID manually below.</p>
+  {% elif not scanned %}
+  <p class="muted">Click “Scan for networks” to list nearby WiFi.</p>
+  {% endif %}
+
+  <form method="post" action="/wifi/connect" class="wifi-form">
+    {% if networks %}
+    <div class="setting-row">
+      <div class="setting-label"><label for="wifi-ssid">Network</label></div>
+      <div class="setting-input">
+        <select name="ssid" id="wifi-ssid" class="lang-select">
+          {% for n in networks %}
+          <option value="{{ n.ssid }}" {{ 'selected' if n.in_use else '' }}>
+            {{ n.ssid }} — {{ n.signal }}%{% if n.security %} · {{ n.security }}{% else %} · open{% endif %}{% if n.in_use %} (connected){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <label for="wifi-ssid-manual">Or enter SSID</label>
+        <span class="muted small">For hidden networks, or when scanning finds nothing.</span>
+      </div>
+      <div class="setting-input">
+        <input type="text" name="ssid_manual" id="wifi-ssid-manual"
+               placeholder="Network name" autocomplete="off" />
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <label for="wifi-pass">Password</label>
+        <span class="muted small">Leave empty for an open network.</span>
+      </div>
+      <div class="setting-input">
+        <input type="password" name="password" id="wifi-pass"
+               placeholder="WiFi password" autocomplete="off" />
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label"></div>
+      <div class="setting-input">
+        <button class="btn btn-primary" type="submit">Connect</button>
+        <span class="muted small">
+          If this device is the one you're browsing from, its address may change
+          after switching networks.
+        </span>
+      </div>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{% endblock %}

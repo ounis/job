@@ -28,7 +28,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import db, services
+from . import db, services, wifi
 from .ics import build_ics
 from pathlib import Path
 
@@ -455,6 +455,38 @@ async def save_settings(request: Request):
     set_env_values(updates)
     log.info("Settings updated via web UI: %s", ", ".join(sorted(updates)))
     return _redirect_with_msg("Settings saved.", "/settings")
+
+
+@app.get("/wifi", response_class=HTMLResponse)
+def wifi_page(request: Request, scan: int = 0):
+    """WiFi setup page. Pass ?scan=1 to force a fresh network scan.
+
+    Scanning is skipped by default so the page loads fast; the user clicks
+    "Scan for networks" to populate the list (scanning can take several seconds).
+    """
+    status = wifi.status()
+    networks = wifi.scan() if (scan and status.available) else []
+    resp = templates.TemplateResponse(
+        request,
+        "wifi.html",
+        {
+            "status": status,
+            "networks": networks,
+            "scanned": bool(scan),
+            "flash": _take_flash(request),
+        },
+    )
+    _clear_flash(resp)
+    return resp
+
+
+@app.post("/wifi/connect")
+def wifi_connect(ssid: str = Form(""), ssid_manual: str = Form(""),
+                 password: str = Form("")):
+    """Join a WiFi network. `ssid_manual` (for hidden networks) wins if given."""
+    target = (ssid_manual or "").strip() or (ssid or "").strip()
+    ok, message = wifi.connect(target, password)
+    return _redirect_with_msg(message, "/wifi")
 
 
 @app.get("/ignored", response_class=HTMLResponse)
